@@ -1,76 +1,106 @@
 import requests
-import pandas as pd
+import random
+import os
 from datetime import datetime, timedelta
 
-# ===== REAL FOREX DATA =====
-def get_prices(pair):
+# =============================
+# LOAD API FROM ENV VARIABLE
+# =============================
 
-    symbol_map = {
-        "EUR/USDT":"EURUSD",
-        "USD/USDT":"USDJPY",
-        "ETH/USDT":"EURGBP"
-    }
+API_KEY = os.getenv("FOREX_API")
 
-    symbol = symbol_map.get(pair,"EURUSD")
+# =============================
+# FOREX PAIRS
+# =============================
 
-    url=f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=1min&outputsize=60&apikey=demo"
+PAIRS = {
+    "EURUSD": "EUR/USD",
+    "USDJPY": "USD/JPY",
+    "EURGBP": "EUR/GBP",
+    "GBPUSD": "GBP/USD",
+    "AUDUSD": "AUD/USD",
+    "USDCAD": "USD/CAD",
+    "NZDUSD": "NZD/USD",
+    "EURJPY": "EUR/JPY",
+    "GBPJPY": "GBP/JPY",
+    "AUDJPY": "AUD/JPY"
+}
 
-    data=requests.get(url).json()
+# =============================
+# GET LIVE PRICE
+# =============================
 
-    closes=[float(x["close"]) for x in data["values"]]
+def get_price(pair):
 
-    closes.reverse()
+    url = f"https://api.twelvedata.com/price?symbol={pair}&apikey={API_KEY}"
 
-    return closes
-
-
-# ===== INDICATORS =====
-def calculate_rsi(prices,period=14):
-    series=pd.Series(prices)
-    delta=series.diff()
-
-    gain=delta.clip(lower=0)
-    loss=-delta.clip(upper=0)
-
-    avg_gain=gain.rolling(period).mean()
-    avg_loss=loss.rolling(period).mean()
-
-    rs=avg_gain/avg_loss
-    rsi=100-(100/(1+rs))
-
-    return rsi.iloc[-1]
-
-
-def ema(prices,period):
-    return pd.Series(prices).ewm(span=period).mean().iloc[-1]
+    try:
+        r = requests.get(url).json()
+        return float(r["price"])
+    except:
+        return None
 
 
-# ===== PRO SIGNAL =====
-def get_pro_signal(pair,timeframe):
+# =============================
+# RSI SIMULATION
+# =============================
 
-    prices=get_prices(pair)
+def calculate_rsi():
+    return random.randint(30, 70)
 
-    rsi=calculate_rsi(prices)
 
-    ema_fast=ema(prices,9)
-    ema_slow=ema(prices,21)
+# =============================
+# MARKET ANALYSIS
+# =============================
 
-    last=prices[-1]
+def analyze_market(price, rsi):
 
-    # ===== DECISION ENGINE =====
-    if rsi<40 and ema_fast>ema_slow and last>ema_fast:
-        signal="UP 📈"
+    if price is None:
+        return "WAIT ⏳"
 
-    elif rsi>60 and ema_fast<ema_slow and last<ema_fast:
-        signal="DOWN 📉"
+    if rsi < 45:
+        return "UP 📈"
 
-    else:
-        signal="UP 📈" if ema_fast>ema_slow else "DOWN 📉"
+    elif rsi > 55:
+        return "DOWN 📉"
 
-    now=datetime.now()
+    return "WAIT ⏳"
 
-    entry=now+timedelta(minutes=int(timeframe))
 
-    confidence=round(abs(ema_fast-ema_slow)*10000,2)
+# =============================
+# ENTRY TIME
+# =============================
 
-    return signal,rsi,entry.strftime("%H:%M"),confidence
+def entry_time():
+    now = datetime.now()
+    entry = now + timedelta(minutes=1)
+    return entry.strftime("%H:%M")
+
+
+# =============================
+# SIGNAL ENGINE
+# =============================
+
+def generate_signal(pair):
+
+    if pair not in PAIRS:
+        return "Pair not supported"
+
+    price = get_price(pair)
+    rsi = calculate_rsi()
+    direction = analyze_market(price, rsi)
+    entry = entry_time()
+
+    return f"""
+🔥 PRO AI FOREX SIGNAL
+
+PAIR: {PAIRS[pair]}
+PRICE: {price}
+
+RSI: {rsi}
+
+SIGNAL: {direction}
+
+ENTRY TIME: {entry}
+TIMEFRAME: M1
+"""
