@@ -1,31 +1,30 @@
-
 import os
 import requests
 import time
 import pandas as pd
-from telegram import Bot
+from telegram.ext import Updater, CommandHandler
 
-# ===============================
-# GET SECRET VARIABLES
-# ===============================
 TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-bot = Bot(token=TOKEN)
+# ========================
+# START COMMAND
+# ========================
+def start(update, context):
+    update.message.reply_text("✅ Trader AI Bot Started!")
 
-# ===============================
-# GET REAL MARKET DATA
-# ===============================
+# ========================
+# GET MARKET DATA
+# ========================
 def get_price():
     url = "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=50"
     data = requests.get(url).json()
-
     closes = [float(candle[4]) for candle in data]
     return closes
 
-# ===============================
+# ========================
 # RSI CALCULATION
-# ===============================
+# ========================
 def calculate_rsi(prices, period=14):
     series = pd.Series(prices)
     delta = series.diff()
@@ -41,41 +40,42 @@ def calculate_rsi(prices, period=14):
 
     return rsi.iloc[-1]
 
-# ===============================
-# SIGNAL LOGIC
-# ===============================
-def get_signal():
+# ========================
+# SEND SIGNALS
+# ========================
+def send_signal(context):
     prices = get_price()
     rsi = calculate_rsi(prices)
 
     if rsi < 30:
-        return "BUY 📈", rsi
+        signal = "BUY 📈"
     elif rsi > 70:
-        return "SELL 📉", rsi
+        signal = "SELL 📉"
     else:
-        return "WAIT ⏳", rsi
+        signal = "WAIT ⏳"
 
-# ===============================
-# MAIN LOOP
-# ===============================
-while True:
-    try:
-        signal, rsi_value = get_signal()
-
-        message = f"""
+    message = f"""
 🔥 QUOTEX SIGNAL
 
 PAIR: BTCUSD
 TIMEFRAME: 1 MIN
+RSI: {round(rsi,2)}
 
-RSI: {round(rsi_value,2)}
 SIGNAL: {signal}
 """
 
-        bot.send_message(chat_id=CHAT_ID, text=message)
+    context.bot.send_message(chat_id=CHAT_ID, text=message)
 
-        time.sleep(60)
+# ========================
+# MAIN BOT
+# ========================
+updater = Updater(TOKEN, use_context=True)
 
-    except Exception as e:
-        print("Error:", e)
-        time.sleep(10)
+dp = updater.dispatcher
+dp.add_handler(CommandHandler("start", start))
+
+# Send signal every 60 sec
+updater.job_queue.run_repeating(send_signal, interval=60, first=10)
+
+updater.start_polling()
+updater.idle()
