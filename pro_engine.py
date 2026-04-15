@@ -5,111 +5,89 @@ from datetime import datetime, timedelta
 
 API_KEY = os.getenv("API_KEY")
 
-INTERVAL="1min"
+INTERVAL = "1min"
 
 # ================= PAIRS =================
-
-NORMAL_PAIRS = [
+PAIRS = [
     "EUR/USD",
     "GBP/USD",
     "USD/JPY",
     "EUR/JPY",
     "GBP/JPY",
-    "AUD/USD",
-    "USD/CAD"
-]
 
-OTC_PAIRS = [
+    # OTC SYSTEM (virtual pairs)
     "EUR/USD OTC",
     "GBP/USD OTC",
-    "USD/JPY OTC",
-    "EUR/JPY OTC",
-    "GBP/JPY OTC"
+    "USD/JPY OTC"
 ]
-
-
-# ================= SMART OTC FILTER =================
-def otc_allowed():
-
-    now = datetime.utcnow()
-
-    # Forex market open Monday-Friday
-    if now.weekday() < 5:
-        return False
-
-    return True
-
-
-# ================= SYMBOL FIX =================
-def real_symbol(pair):
-
-    if "OTC" in pair:
-        return pair.replace(" OTC","")
-
-    return pair
 
 
 # ================= MARKET DATA =================
 def get_market(pair):
 
-    symbol = real_symbol(pair)
+    symbol = pair.replace(" OTC", "")
 
-    url=f"https://api.twelvedata.com/time_series?symbol={symbol}&interval={INTERVAL}&outputsize=120&apikey={API_KEY}"
+    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval={INTERVAL}&outputsize=120&apikey={API_KEY}"
 
-    data=requests.get(url).json()
+    data = requests.get(url).json()
 
     if "values" not in data:
-        raise Exception("API Error")
+        return None
 
-    closes=[float(x["close"]) for x in data["values"]]
+    closes = [float(x["close"]) for x in data["values"]]
+    closes.reverse()
 
     return closes
 
 
 # ================= RSI =================
-def rsi(data,period=14):
+def rsi(data, period=14):
 
-    gains=[]
-    losses=[]
+    gains = []
+    losses = []
 
-    for i in range(1,len(data)):
-        diff=data[i]-data[i-1]
+    for i in range(1, len(data)):
+        diff = data[i] - data[i-1]
 
-        if diff>0:
+        if diff > 0:
             gains.append(diff)
         else:
             losses.append(abs(diff))
 
-    avg_gain=sum(gains[-period:])/period
-    avg_loss=sum(losses[-period:])/period
-
-    if avg_loss==0:
+    if len(gains) < period or len(losses) < period:
         return 50
 
-    rs=avg_gain/avg_loss
-    return 100-(100/(1+rs))
+    avg_gain = sum(gains[-period:]) / period
+    avg_loss = sum(losses[-period:]) / period
+
+    if avg_loss == 0:
+        return 50
+
+    rs = avg_gain / avg_loss
+    return 100 - (100 / (1 + rs))
 
 
 # ================= EMA =================
-def ema(data,period):
+def ema(data, period):
 
-    k=2/(period+1)
-    ema_val=data[0]
+    k = 2 / (period + 1)
+    ema_val = data[0]
 
     for price in data:
-        ema_val=price*k+ema_val*(1-k)
+        ema_val = price * k + ema_val * (1 - k)
 
     return ema_val
 
 
 # ================= MACD =================
 def macd(data):
-    return ema(data,12)-ema(data,26)
+    return ema(data, 12) - ema(data, 26)
 
 
-# ================= SUPPORT RESISTANCE =================
+# ================= SUPPORT / RESISTANCE =================
 def resistance(data):
     return max(data[-25:])
+
 
 def support(data):
     return min(data[-25:])
@@ -117,17 +95,15 @@ def support(data):
 
 # ================= RWANDA ENTRY TIME =================
 def entry_time_rw():
-
-    now=datetime.utcnow()+timedelta(hours=2)
-    entry=now+timedelta(seconds=15)
-
+    now = datetime.utcnow() + timedelta(hours=2)
+    entry = now + timedelta(seconds=15)
     return entry.strftime("%H:%M:%S")
 
 
 # ================= WINRATE BOOSTER =================
-def winrate_filter(buy,sell,rsi_val,macd_val):
+def winrate_filter(buy, sell, rsi_val, macd_val):
 
-    strength=abs(buy-sell)
+    strength = abs(buy - sell)
 
     if strength < 2:
         return False
@@ -144,77 +120,72 @@ def winrate_filter(buy,sell,rsi_val,macd_val):
 # ================= ANALYSIS =================
 def analyze(pair):
 
-    closes=get_market(pair)
+    closes = get_market(pair)
 
-    price=closes[-1]
-
-    rsi_val=rsi(closes)
-    macd_val=macd(closes)
-
-    ema_fast=ema(closes,9)
-    ema_slow=ema(closes,21)
-
-    res=resistance(closes)
-    sup=support(closes)
-
-    buy=0
-    sell=0
-
-    if rsi_val<40:
-        buy+=1
-    elif rsi_val>60:
-        sell+=1
-
-    if ema_fast>ema_slow:
-        buy+=1
-    else:
-        sell+=1
-
-    if macd_val>0:
-        buy+=1
-    else:
-        sell+=1
-
-    if price<=sup*1.002:
-        buy+=1
-
-    if price>=res*0.998:
-        sell+=1
-
-    if not winrate_filter(buy,sell,rsi_val,macd_val):
+    if not closes:
         return None
 
-    signal="🟢 BUY (CALL)" if buy>sell else "🔴 SELL (PUT)"
-    strength=abs(buy-sell)
+    price = closes[-1]
 
-    return pair,price,signal,strength,rsi_val,macd_val
+    rsi_val = rsi(closes)
+    macd_val = macd(closes)
+
+    ema_fast = ema(closes, 9)
+    ema_slow = ema(closes, 21)
+
+    res = resistance(closes)
+    sup = support(closes)
+
+    buy = 0
+    sell = 0
+
+    if rsi_val < 40:
+        buy += 1
+    elif rsi_val > 60:
+        sell += 1
+
+    if ema_fast > ema_slow:
+        buy += 1
+    else:
+        sell += 1
+
+    if macd_val > 0:
+        buy += 1
+    else:
+        sell += 1
+
+    if price <= sup * 1.002:
+        buy += 1
+
+    if price >= res * 0.998:
+        sell += 1
+
+    if not winrate_filter(buy, sell, rsi_val, macd_val):
+        return None
+
+    signal = "🟢 BUY (CALL)" if buy > sell else "🔴 SELL (PUT)"
+    strength = abs(buy - sell)
+
+    return pair, price, signal, strength, rsi_val, macd_val
 
 
 # ================= MAIN SIGNAL =================
-def get_signal():
+def generate_signal():
 
-    print("AI analyzing market...")
-
-    # 🔥 10s Analysis Engine
+    # 🔥 10s analysis delay
     time.sleep(10)
 
-    pairs = NORMAL_PAIRS.copy()
+    best = None
+    best_strength = 0
 
-    # OTC only when forex closed
-    if otc_allowed():
-        pairs += OTC_PAIRS
-
-    best=None
-    best_strength=0
-
-    for pair in pairs:
+    for pair in PAIRS:
 
         try:
-            result=analyze(pair)
+            result = analyze(pair)
 
-            if result and result[3]>best_strength:
-                best=result
-                best_strength=result[3]
+            if result and result[3] > best_strength:
+                best = result
+                best_strength = result[3]
 
         except:
             continue
@@ -222,18 +193,14 @@ def get_signal():
     if not best:
         return "⚠️ Market not strong now. Try again."
 
-    pair,price,signal,strength,rsi_val,macd_val=best
+    pair, price, signal, strength, rsi_val, macd_val = best
 
-    entry=entry_time_rw()
+    entry = entry_time_rw()
 
-    winrate=min(92,90+strength)
-
-    mode="🔥 OTC MODE" if "OTC" in pair else "📊 LIVE MARKET"
+    winrate = min(92, 88 + strength)
 
     return f"""
 🔥 PRO AI SIGNAL
-
-MODE: {mode}
 
 PAIR: {pair}
 PRICE: {price}
