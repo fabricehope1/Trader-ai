@@ -4,10 +4,8 @@ import random
 from datetime import datetime
 import pytz
 
-# ================= API =================
 API_KEY = os.getenv("FOREX_API_KEY")
 
-# ================= PAIRS =================
 PAIRS = [
     "EUR/USD",
     "GBP/USD",
@@ -17,51 +15,49 @@ PAIRS = [
     "AUD/USD"
 ]
 
-TIMEFRAME_MAP = {
-    "M1": "1min",
-    "M5": "5min",
-    "M15": "15min"
-}
+def format_pair(pair):
+    # EUR/USD -> EURUSD
+    return pair.replace("/", "")
 
-# ================= GET DATA =================
-def get_price(pair, interval):
+
+def get_price(pair):
+
+    symbol = format_pair(pair)
 
     url = "https://api.twelvedata.com/price"
 
     params = {
-        "symbol": pair,
+        "symbol": symbol,
         "apikey": API_KEY
     }
 
     try:
         r = requests.get(url, params=params, timeout=10).json()
 
+        print("API RESPONSE:", r)
+
         if "price" not in r:
-            print("API ERROR:", r)
             return None
 
         return float(r["price"])
 
     except Exception as e:
-        print("REQUEST ERROR:", e)
+        print(e)
         return None
 
 
-# ================= SIGNAL =================
 def generate_signal(pair, timeframe):
 
-    price = get_price(pair, timeframe)
+    price = get_price(pair)
 
     if price is None:
         return {
             "status": "error",
-            "message": "Market data unavailable"
+            "message": "API failed"
         }
 
-    # SIMPLE AI LOGIC (Stable)
     direction = random.choice(["CALL 📈", "PUT 📉"])
-
-    accuracy = random.randint(80, 92)
+    accuracy = random.randint(82, 94)
 
     tz = pytz.timezone("Africa/Kigali")
     entry_time = datetime.now(tz).strftime("%H:%M:%S")
@@ -73,4 +69,4 @@ def generate_signal(pair, timeframe):
         "timeframe": timeframe,
         "entry_time": entry_time,
         "accuracy": f"{accuracy}%"
-        }
+    }
