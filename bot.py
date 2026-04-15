@@ -254,4 +254,8 @@ def messages(msg):
         main_menu(msg.chat.id)
         return
 
-bot.infinity_polling()
+bot.infinity_polling(
+    timeout=60,
+    long_polling_timeout=60,
+    skip_pending=True
+)
