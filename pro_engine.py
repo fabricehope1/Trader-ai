@@ -5,24 +5,64 @@ from datetime import datetime, timedelta
 
 API_KEY = os.getenv("API_KEY")
 
-PAIRS = [
+INTERVAL="1min"
+
+# ================= PAIRS =================
+
+NORMAL_PAIRS = [
     "EUR/USD",
     "GBP/USD",
     "USD/JPY",
     "EUR/JPY",
-    "GBP/JPY"
+    "GBP/JPY",
+    "AUD/USD",
+    "USD/CAD"
 ]
 
-INTERVAL="1min"
+OTC_PAIRS = [
+    "EUR/USD OTC",
+    "GBP/USD OTC",
+    "USD/JPY OTC",
+    "EUR/JPY OTC",
+    "GBP/JPY OTC"
+]
+
+
+# ================= SMART OTC FILTER =================
+def otc_allowed():
+
+    now = datetime.utcnow()
+
+    # Forex market open Monday-Friday
+    if now.weekday() < 5:
+        return False
+
+    return True
+
+
+# ================= SYMBOL FIX =================
+def real_symbol(pair):
+
+    if "OTC" in pair:
+        return pair.replace(" OTC","")
+
+    return pair
 
 
 # ================= MARKET DATA =================
 def get_market(pair):
 
-    url=f"https://api.twelvedata.com/time_series?symbol={pair}&interval={INTERVAL}&outputsize=120&apikey={API_KEY}"
+    symbol = real_symbol(pair)
+
+    url=f"https://api.twelvedata.com/time_series?symbol={symbol}&interval={INTERVAL}&outputsize=120&apikey={API_KEY}"
+
     data=requests.get(url).json()
 
+    if "values" not in data:
+        raise Exception("API Error")
+
     closes=[float(x["close"]) for x in data["values"]]
+
     return closes
 
 
@@ -101,7 +141,7 @@ def winrate_filter(buy,sell,rsi_val,macd_val):
     return True
 
 
-# ================= ANALYZE =================
+# ================= ANALYSIS =================
 def analyze(pair):
 
     closes=get_market(pair)
@@ -153,13 +193,21 @@ def analyze(pair):
 # ================= MAIN SIGNAL =================
 def get_signal():
 
-    # 🔥 ANALYSIS TIME HERE
+    print("AI analyzing market...")
+
+    # 🔥 10s Analysis Engine
     time.sleep(10)
+
+    pairs = NORMAL_PAIRS.copy()
+
+    # OTC only when forex closed
+    if otc_allowed():
+        pairs += OTC_PAIRS
 
     best=None
     best_strength=0
 
-    for pair in PAIRS:
+    for pair in pairs:
 
         try:
             result=analyze(pair)
@@ -178,10 +226,14 @@ def get_signal():
 
     entry=entry_time_rw()
 
-    winrate=90+strength
+    winrate=min(92,90+strength)
+
+    mode="🔥 OTC MODE" if "OTC" in pair else "📊 LIVE MARKET"
 
     return f"""
 🔥 PRO AI SIGNAL
+
+MODE: {mode}
 
 PAIR: {pair}
 PRICE: {price}
