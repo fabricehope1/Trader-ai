@@ -1,129 +1,118 @@
-import requests
+hereimport requests
 import pandas as pd
 import ta
 import os
 from datetime import datetime
-from zoneinfo import ZoneInfo   # Rwanda Time
+import pytz
 
+# ========================
+# API KEY
+# ========================
 API_KEY = os.getenv("FOREX_API_KEY")
 
-# ================= PAIRS =================
+# ========================
+# FOREX PAIRS (Binary Options)
+# ========================
 PAIRS = [
     "EUR/USD",
     "GBP/USD",
     "USD/JPY",
+    "USD/CAD",
     "EUR/GBP",
-    "AUD/USD",
-    "USD/CAD"
+    "AUD/USD"
 ]
 
-# ================= TIMEFRAME =================
-TF_MAP = {
+# ========================
+# TIMEFRAMES
+# ========================
+TIMEFRAME_MAP = {
     "M1": "1min",
     "M5": "5min",
     "M15": "15min"
 }
 
 
-# ================= GET FOREX DATA =================
-def get_data(pair, timeframe):
+# ========================
+# GET MARKET DATA
+# ========================
+def get_market_data(pair, timeframe):
 
-    interval = TF_MAP[timeframe]
+    url = "https://api.twelvedata.com/time_series"
 
-    url = (
-        f"https://api.twelvedata.com/time_series"
-        f"?symbol={pair}&interval={interval}&outputsize=120&apikey={API_KEY}"
-    )
+    params = {
+        "symbol": pair,
+        "interval": timeframe,
+        "apikey": API_KEY,
+        "outputsize": 120
+    }
 
-    response = requests.get(url).json()
+    try:
+        response = requests.get(url, params=params).json()
 
-    if "values" not in response:
+        if "values" not in response:
+            print("API ERROR:", response)
+            return None
+
+        df = pd.DataFrame(response["values"])
+        df = df.astype(float)
+        df = df[::-1]
+
+        return df
+
+    except Exception as e:
+        print("DATA ERROR:", e)
         return None
 
-    df = pd.DataFrame(response["values"])
 
-    df["close"] = df["close"].astype(float)
-    df["open"] = df["open"].astype(float)
-    df["high"] = df["high"].astype(float)
-    df["low"] = df["low"].astype(float)
+# ========================
+# SIGNAL ENGINE
+# ========================
+def generate_signal(pair, tf):
 
-    return df.iloc[::-1]
+    if tf not in TIMEFRAME_MAP:
+        return "Invalid timeframe"
 
+    timeframe = TIMEFRAME_MAP[tf]
 
-# ================= ANALYSIS ENGINE =================
-def analyze(df):
+    df = get_market_data(pair, timeframe)
 
-    df["ema20"] = ta.trend.ema_indicator(df["close"], window=20)
-    df["ema50"] = ta.trend.ema_indicator(df["close"], window=50)
-    df["rsi"] = ta.momentum.rsi(df["close"], window=14)
+    if df is None or len(df) < 60:
+        return None
 
-    macd = ta.trend.MACD(df["close"])
-    df["macd"] = macd.macd()
-    df["macd_signal"] = macd.macd_signal()
+    close = df["close"]
 
-    last = df.iloc[-1]
+    # Indicators
+    rsi = ta.momentum.RSIIndicator(close).rsi()
+    ema_fast = ta.trend.EMAIndicator(close, window=20).ema_indicator()
+    ema_slow = ta.trend.EMAIndicator(close, window=50).ema_indicator()
 
-    score = 0
+    price = close.iloc[-1]
+    rsi_last = rsi.iloc[-1]
+    ema20 = ema_fast.iloc[-1]
+    ema50 = ema_slow.iloc[-1]
 
-    # Trend
-    if last["ema20"] > last["ema50"]:
-        score += 1
-    else:
-        score -= 1
+    signal = "WAIT ⏳"
 
-    # RSI
-    if last["rsi"] < 35:
-        score += 1
+    if price > ema20 > ema50 and rsi_last > 55:
+        signal = "CALL 📈"
 
-    if last["rsi"] > 65:
-        score -= 1
+    elif price < ema20 < ema50 and rsi_last < 45:
+        signal = "PUT 📉"
 
-    # Momentum
-    if last["macd"] > last["macd_signal"]:
-        score += 1
-    else:
-        score -= 1
+    # Rwanda Time
+    tz = pytz.timezone("Africa/Kigali")
+    entry_time = datetime.now(tz).strftime("%H:%M:%S")
 
-    if score >= 2:
-        return "CALL 📈", score
+    message = f"""
+📊 BINARY OPTIONS SIGNAL
 
-    if score <= -2:
-        return "PUT 📉", score
+PAIR: {pair}
+TIMEFRAME: {tf}
 
-    return None, score
+SIGNAL: {signal}
 
+ENTRY TIME 🇷🇼: {entry_time}
+EXPIRY: {tf}
+"""
 
-# ================= RWANDA TIME =================
-def rwanda_time():
-    return datetime.now(ZoneInfo("Africa/Kigali")).strftime("%H:%M:%S")
-
-
-# ================= SIGNAL FUNCTION =================
-def generate_signal(pair, timeframe):
-
-    df = get_data(pair, timeframe)
-
-    if df is None:
-        return {"status": "error"}
-
-    signal, confidence = analyze(df)
-
-    if not signal:
-        return {
-            "status": "wait",
-            "message": "⏳ Market not safe now. Wait next setup..."
-        }
-
-    accuracy = 75 + abs(confidence) * 5
-
-    if accuracy > 90:
-        accuracy = 90
-
-    return {
-        "status": "success",
-        "pair": pair,
-        "signal": signal,
-        "timeframe": timeframe,
-        "entry_time": rwanda_time(),
-        "accuracy": f"{accuracy}%"
-}
+    return message
