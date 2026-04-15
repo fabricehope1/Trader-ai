@@ -136,16 +136,59 @@ def messages(msg):
 
 # ================= TIMEFRAME =================
 
-    if text in ["M1","M5","M15"]:
+    # ===== TIMEFRAME SELECTION =====
 
-        pair=user_pair.get(msg.chat.id)
+if text in ["M1", "M5", "M15"]:
 
-        if not pair:
-            bot.send_message(msg.chat.id,"Select Pair First")
-            return
+    # Reba niba user yahisemo pair mbere
+    pair = user_pair.get(msg.chat.id)
 
-        signal=generate_signal(pair,text)
-        bot.send_message(msg.chat.id,signal)
+    if not pair:
+        bot.send_message(
+            msg.chat.id,
+            "⚠️ Please select pair first"
+        )
+        return
+
+    timeframe = text
+
+    # Hamagara AI ENGINE
+    result = generate_signal(pair, timeframe)
+
+    # ===== SUCCESS SIGNAL =====
+    if result["status"] == "success":
+
+        message = f"""
+📊 AI SIGNAL
+
+Pair: {result['pair']}
+Signal: {result['signal']}
+Timeframe: {result['timeframe']}
+Entry Time (RW): {result['entry_time']}
+Accuracy: {result['accuracy']}
+"""
+
+        bot.send_message(msg.chat.id, message)
+        return
+
+
+    # ===== MARKET LOADING =====
+    elif result["status"] == "wait":
+
+        bot.send_message(
+            msg.chat.id,
+            result["message"]
+        )
+        return
+
+
+    # ===== ERROR =====
+    else:
+
+        bot.send_message(
+            msg.chat.id,
+            "⚠️ Signal generation error"
+        )
         return
 
 # ================= ADMIN PANEL =================
