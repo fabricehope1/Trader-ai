@@ -2,12 +2,11 @@ import os
 import json
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters, CallbackContext
-
 from pro_engine import get_pro_signal
 
 TOKEN=os.getenv("BOT_TOKEN")
 
-ADMIN_ID=123456789
+ADMIN_ID=8448217655
 
 CRYPTO_ADDRESS="0xA7123932DF237A24ad8c251502C169d744dd6D41"
 
@@ -22,189 +21,230 @@ def save_users(data):
     with open("users.json","w") as f:
         json.dump(data,f)
 
-def add_vip(user_id):
+def add_vip(uid):
     data=load_users()
-    if user_id not in data["vip_users"]:
-        data["vip_users"].append(user_id)
+    if uid not in data["vip_users"]:
+        data["vip_users"].append(uid)
         save_users(data)
 
-def is_vip(user_id):
-    if user_id==ADMIN_ID:
+def is_vip(uid):
+    if uid==ADMIN_ID:
         return True
     data=load_users()
-    return user_id in data["vip_users"]
-
-
-# ================= PAYMENTS =================
-def load_payments():
-    with open("payments.json") as f:
-        return json.load(f)
-
-def save_payments(data):
-    with open("payments.json","w") as f:
-        json.dump(data,f)
+    return uid in data["vip_users"]
 
 
 # ================= START =================
-def start(update:Update,context:CallbackContext):
+def start(update,context):
 
-    kb=[
-        [InlineKeyboardButton("📊 Get Signal",callback_data="signal_menu")],
-        [InlineKeyboardButton("💳 Buy VIP",callback_data="buy_vip")]
-    ]
+    uid=update.message.from_user.id
+
+    if uid==ADMIN_ID:
+        kb=[
+            [InlineKeyboardButton("📊 Get Signal",callback_data="signal_menu")],
+            [InlineKeyboardButton("👑 Admin Panel",callback_data="admin")]
+        ]
+    else:
+        kb=[
+            [InlineKeyboardButton("📊 Get Signal",callback_data="signal_menu")],
+            [InlineKeyboardButton("💳 Buy VIP",callback_data="buy")]
+        ]
 
     update.message.reply_text(
-        "🤖 AI SIGNAL BOT",
+        "🤖 QUOTEX AI BOT",
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
 
-# ================= BUY VIP =================
-def buy_vip(query):
+# ================= PAIRS =================
+def pair_menu(query,uid):
 
-    keyboard=[
-        [InlineKeyboardButton("📋 Copy Payment Address",url=f"https://bscscan.com/address/{CRYPTO_ADDRESS}")],
-        [InlineKeyboardButton("✅ I PAID",callback_data="upload_proof")]
+    pairs=[
+        "EURUSD","USDJPY","GBPUSD","AUDUSD","USDCAD",
+        "EURJPY","GBPJPY","EURGBP","NZDUSD","USDCHF"
     ]
 
+    buttons=[]
+
+    for p in pairs:
+        if is_vip(uid):
+            buttons.append([InlineKeyboardButton(p,callback_data=f"pair_{p}")])
+        else:
+            buttons.append([InlineKeyboardButton(f"{p} 🔒",callback_data="locked")])
+
+    buttons.append([InlineKeyboardButton("⬅️ Back",callback_data="back")])
+
     query.edit_message_text(
-f"""
-💎 VIP PRICE: 15 USDT (BEP20)
-
-Send payment to:
-
-{CRYPTO_ADDRESS}
-
-After payment click I PAID
-""",
-reply_markup=InlineKeyboardMarkup(keyboard)
-)
+        "Select Pair",
+        reply_markup=InlineKeyboardMarkup(buttons)
+    )
 
 
 # ================= BUTTON =================
-def button(update:Update,context:CallbackContext):
+def button(update,context):
 
     query=update.callback_query
     query.answer()
 
-    user_id=query.from_user.id
+    uid=query.from_user.id
     data=query.data
 
-    if data=="buy_vip":
-        buy_vip(query)
+    # BACK
+    if data=="back":
+        start(update,context)
+        return
 
-    elif data=="upload_proof":
-        context.user_data["awaiting_proof"]=True
-        query.message.reply_text("📤 Upload payment screenshot")
+    # BUY VIP
+    if data=="buy":
 
-    elif data=="signal_menu":
-
-        keyboard=[
-            [InlineKeyboardButton("EURUSD",callback_data="pair_EURUSD")],
-            [InlineKeyboardButton("USDJPY",callback_data="pair_USDJPY")],
-            [InlineKeyboardButton("EURGBP",callback_data="pair_EURGBP")]
+        kb=[
+            [InlineKeyboardButton("📋 Copy Address",
+             url=f"https://bscscan.com/address/{CRYPTO_ADDRESS}")],
+            [InlineKeyboardButton("✅ I PAID",callback_data="proof")],
+            [InlineKeyboardButton("⬅️ Back",callback_data="back")]
         ]
 
         query.edit_message_text(
-            "Select Pair",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+f"""
+💎 VIP PRICE: 15 USDT BEP20
 
+Send payment to:
+
+{CRYPTO_ADDRESS}
+""",
+reply_markup=InlineKeyboardMarkup(kb)
+)
+
+    # USER UPLOAD PROOF
+    elif data=="proof":
+        context.user_data["await_proof"]=True
+        query.message.reply_text("📤 Upload payment screenshot")
+
+    # SIGNAL MENU
+    elif data=="signal_menu":
+        pair_menu(query,uid)
+
+    # LOCKED
+    elif data=="locked":
+        query.answer("VIP ONLY 🔒 Buy VIP First",show_alert=True)
+
+    # SELECT PAIR
     elif data.startswith("pair_"):
 
         pair=data.split("_")[1]
-        user_settings[user_id]={"pair":pair}
+
+        user_settings[uid]={"pair":pair}
 
         kb=[
             [InlineKeyboardButton("1 MIN",callback_data="time_1")],
-            [InlineKeyboardButton("5 MIN",callback_data="time_5")]
+            [InlineKeyboardButton("5 MIN",callback_data="time_5")],
+            [InlineKeyboardButton("⬅️ Back",callback_data="signal_menu")]
         ]
 
-        query.edit_message_text("Select Timeframe",
-        reply_markup=InlineKeyboardMarkup(kb))
+        query.edit_message_text(
+            f"{pair} Selected\nChoose Timeframe",
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
 
+    # TIMEFRAME
     elif data.startswith("time_"):
 
-        timeframe=data.split("_")[1]
-        user_settings[user_id]["time"]=timeframe
+        tf=data.split("_")[1]
+        user_settings[uid]["time"]=tf
 
-        kb=[[InlineKeyboardButton("🔥 GET SIGNAL",callback_data="signal")]]
+        kb=[
+            [InlineKeyboardButton("🔥 GET SIGNAL",callback_data="signal")],
+            [InlineKeyboardButton("⬅️ Back",callback_data="signal_menu")]
+        ]
 
         query.edit_message_text(
             "Click GET SIGNAL",
             reply_markup=InlineKeyboardMarkup(kb)
         )
 
+    # GET SIGNAL
     elif data=="signal":
 
-        if not is_vip(user_id):
-            query.edit_message_text("❌ VIP ONLY\nBuy VIP First")
+        if not is_vip(uid):
+            query.answer("VIP ONLY 🔒",show_alert=True)
             return
 
-        pair=user_settings[user_id]["pair"]
-        timeframe=user_settings[user_id]["time"]
+        pair=user_settings[uid]["pair"]
+        tf=user_settings[uid]["time"]
 
-        signal,rsi,entry,confidence=get_pro_signal(pair,timeframe)
+        signal,rsi,entry,conf=get_pro_signal(pair,tf)
 
         query.edit_message_text(
 f"""
 🔥 QUOTEX PRO SIGNAL
 
 PAIR: {pair}
-ENTRY: {entry}
-TIMEFRAME: {timeframe}
+ENTRY TIME: {entry}
+TIMEFRAME: {tf}M
 
 SIGNAL: {signal}
-CONFIDENCE: {confidence}
+CONFIDENCE: {conf}
 """
-        )
+)
 
-    # ===== ADMIN APPROVE =====
+    # ADMIN PANEL
+    elif data=="admin" and uid==ADMIN_ID:
+
+        users=load_users()
+
+        query.edit_message_text(
+f"""
+👑 ADMIN PANEL
+
+VIP USERS: {len(users['vip_users'])}
+"""
+)
+
+    # APPROVE USER
     elif data.startswith("approve_"):
 
-        uid=int(data.split("_")[1])
-        add_vip(uid)
+        user=int(data.split("_")[1])
+        add_vip(user)
 
-        context.bot.send_message(uid,"✅ Payment Approved. VIP Activated")
+        context.bot.send_message(user,"✅ VIP Activated")
 
-        query.edit_message_text("User Approved ✅")
+        query.edit_message_text("Approved ✅")
 
+    # REJECT USER
     elif data.startswith("reject_"):
 
-        uid=int(data.split("_")[1])
+        user=int(data.split("_")[1])
 
-        context.bot.send_message(uid,"❌ Payment Rejected")
+        context.bot.send_message(user,"❌ Payment Rejected")
 
-        query.edit_message_text("User Rejected ❌")
+        query.edit_message_text("Rejected ❌")
 
 
 # ================= PAYMENT PROOF =================
-def handle_photo(update:Update,context:CallbackContext):
+def photo(update,context):
 
-    if not context.user_data.get("awaiting_proof"):
+    if not context.user_data.get("await_proof"):
         return
 
     user=update.message.from_user
 
-    keyboard=[
-        [
-            InlineKeyboardButton("✅ APPROVE",
-            callback_data=f"approve_{user.id}"),
-            InlineKeyboardButton("❌ REJECT",
-            callback_data=f"reject_{user.id}")
-        ]
-    ]
+    kb=[[
+        InlineKeyboardButton("✅ APPROVE",
+        callback_data=f"approve_{user.id}"),
+        InlineKeyboardButton("❌ REJECT",
+        callback_data=f"reject_{user.id}")
+    ]]
 
     context.bot.send_photo(
         ADMIN_ID,
         photo=update.message.photo[-1].file_id,
-        caption=f"Payment Proof from @{user.username}\nID:{user.id}",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        caption=f"Payment from @{user.username}\nID:{user.id}",
+        reply_markup=InlineKeyboardMarkup(kb)
     )
 
-    update.message.reply_text("✅ Proof sent to Admin")
+    update.message.reply_text("✅ Sent to Admin")
 
-    context.user_data["awaiting_proof"]=False
+    context.user_data["await_proof"]=False
 
 
 # ================= MAIN =================
@@ -216,7 +256,7 @@ def main():
 
     dp.add_handler(CommandHandler("start",start))
     dp.add_handler(CallbackQueryHandler(button))
-    dp.add_handler(MessageHandler(Filters.photo,handle_photo))
+    dp.add_handler(MessageHandler(Filters.photo,photo))
 
     updater.start_polling()
     updater.idle()
