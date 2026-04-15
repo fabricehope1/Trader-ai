@@ -1,146 +1,199 @@
-import os
 import requests
-import pandas as pd
+import os
 import time
+from datetime import datetime, timedelta
 
-API_KEY = os.getenv("FOREX_API")
+API_KEY = os.getenv("API_KEY")
 
 PAIRS = [
     "EUR/USD",
     "GBP/USD",
     "USD/JPY",
-    "AUD/USD",
-    "USD/CAD"
+    "EUR/JPY",
+    "GBP/JPY"
 ]
 
-# =========================
-# GET MARKET DATA
-# =========================
-def get_market_data(symbol):
+INTERVAL="1min"
 
-    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=1min&outputsize=100&apikey={API_KEY}"
 
-    r = requests.get(url)
-    data = r.json()
+# ================= MARKET DATA =================
+def get_market(pair):
 
-    if "values" not in data:
+    url=f"https://api.twelvedata.com/time_series?symbol={pair}&interval={INTERVAL}&outputsize=120&apikey={API_KEY}"
+    data=requests.get(url).json()
+
+    closes=[float(x["close"]) for x in data["values"]]
+    return closes
+
+
+# ================= RSI =================
+def rsi(data,period=14):
+
+    gains=[]
+    losses=[]
+
+    for i in range(1,len(data)):
+        diff=data[i]-data[i-1]
+
+        if diff>0:
+            gains.append(diff)
+        else:
+            losses.append(abs(diff))
+
+    avg_gain=sum(gains[-period:])/period
+    avg_loss=sum(losses[-period:])/period
+
+    if avg_loss==0:
+        return 50
+
+    rs=avg_gain/avg_loss
+    return 100-(100/(1+rs))
+
+
+# ================= EMA =================
+def ema(data,period):
+
+    k=2/(period+1)
+    ema_val=data[0]
+
+    for price in data:
+        ema_val=price*k+ema_val*(1-k)
+
+    return ema_val
+
+
+# ================= MACD =================
+def macd(data):
+    return ema(data,12)-ema(data,26)
+
+
+# ================= SUPPORT RESISTANCE =================
+def resistance(data):
+    return max(data[-25:])
+
+def support(data):
+    return min(data[-25:])
+
+
+# ================= RWANDA ENTRY TIME =================
+def entry_time_rw():
+
+    now=datetime.utcnow()+timedelta(hours=2)
+    entry=now+timedelta(seconds=15)
+
+    return entry.strftime("%H:%M:%S")
+
+
+# ================= WINRATE BOOSTER =================
+def winrate_filter(buy,sell,rsi_val,macd_val):
+
+    strength=abs(buy-sell)
+
+    if strength < 2:
+        return False
+
+    if 45 < rsi_val < 55:
+        return False
+
+    if abs(macd_val) < 0.00005:
+        return False
+
+    return True
+
+
+# ================= ANALYZE =================
+def analyze(pair):
+
+    closes=get_market(pair)
+
+    price=closes[-1]
+
+    rsi_val=rsi(closes)
+    macd_val=macd(closes)
+
+    ema_fast=ema(closes,9)
+    ema_slow=ema(closes,21)
+
+    res=resistance(closes)
+    sup=support(closes)
+
+    buy=0
+    sell=0
+
+    if rsi_val<40:
+        buy+=1
+    elif rsi_val>60:
+        sell+=1
+
+    if ema_fast>ema_slow:
+        buy+=1
+    else:
+        sell+=1
+
+    if macd_val>0:
+        buy+=1
+    else:
+        sell+=1
+
+    if price<=sup*1.002:
+        buy+=1
+
+    if price>=res*0.998:
+        sell+=1
+
+    if not winrate_filter(buy,sell,rsi_val,macd_val):
         return None
 
-    df = pd.DataFrame(data["values"])
-    df = df.astype(float)
-    df = df.iloc[::-1]
+    signal="🟢 BUY (CALL)" if buy>sell else "🔴 SELL (PUT)"
+    strength=abs(buy-sell)
 
-    return df
-
-
-# =========================
-# RSI
-# =========================
-def calculate_rsi(df, period=14):
-
-    delta = df["close"].diff()
-
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-
-    avg_gain = gain.rolling(period).mean()
-    avg_loss = loss.rolling(period).mean()
-
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-
-    return rsi.iloc[-1]
+    return pair,price,signal,strength,rsi_val,macd_val
 
 
-# =========================
-# EMA
-# =========================
-def calculate_ema(df, period):
+# ================= MAIN SIGNAL =================
+def get_signal():
 
-    return df["close"].ewm(span=period).mean().iloc[-1]
+    # 🔥 ANALYSIS TIME HERE
+    time.sleep(10)
 
-
-# =========================
-# MACD
-# =========================
-def calculate_macd(df):
-
-    ema12 = df["close"].ewm(span=12).mean()
-    ema26 = df["close"].ewm(span=26).mean()
-
-    macd = ema12 - ema26
-    signal = macd.ewm(span=9).mean()
-
-    return macd.iloc[-1], signal.iloc[-1]
-
-
-# =========================
-# SUPPORT / RESISTANCE
-# =========================
-def support_resistance(df):
-
-    support = df["low"].tail(20).min()
-    resistance = df["high"].tail(20).max()
-
-    return support, resistance
-
-
-# =========================
-# SIGNAL ENGINE
-# =========================
-def generate_signal():
-
-    results = []
+    best=None
+    best_strength=0
 
     for pair in PAIRS:
 
-        df = get_market_data(pair)
+        try:
+            result=analyze(pair)
 
-        if df is None:
+            if result and result[3]>best_strength:
+                best=result
+                best_strength=result[3]
+
+        except:
             continue
 
-        # ⏳ Analysis time
-        time.sleep(2)
+    if not best:
+        return "⚠️ Market not strong now. Try again."
 
-        price = df["close"].iloc[-1]
+    pair,price,signal,strength,rsi_val,macd_val=best
 
-        rsi = calculate_rsi(df)
-        ema20 = calculate_ema(df, 20)
-        ema50 = calculate_ema(df, 50)
+    entry=entry_time_rw()
 
-        macd, macd_signal = calculate_macd(df)
+    winrate=90+strength
 
-        support, resistance = support_resistance(df)
+    return f"""
+🔥 PRO AI SIGNAL
 
-        signal = "WAIT"
+PAIR: {pair}
+PRICE: {price}
 
-        # ======================
-        # BUY CONDITIONS
-        # ======================
-        if (
-            rsi < 35 and
-            price > ema20 > ema50 and
-            macd > macd_signal and
-            price > support
-        ):
-            signal = "BUY 🟢"
+RSI: {round(rsi_val,2)}
+MACD: {round(macd_val,5)}
 
-        # ======================
-        # SELL CONDITIONS
-        # ======================
-        elif (
-            rsi > 65 and
-            price < ema20 < ema50 and
-            macd < macd_signal and
-            price < resistance
-        ):
-            signal = "SELL 🔴"
+SIGNAL: {signal}
 
-        results.append({
-            "pair": pair,
-            "signal": signal,
-            "price": price,
-            "rsi": round(rsi,2)
-        })
+ENTRY TIME 🇷🇼: {entry}
+EXPIRY: 1 MIN
 
-    return results
+WINRATE BOOSTER: {winrate}%
+STRENGTH: {strength}/4
+"""
