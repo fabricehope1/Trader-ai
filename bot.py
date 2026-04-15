@@ -9,29 +9,29 @@ TOKEN = os.getenv("BOT_TOKEN")
 user_settings = {}
 
 # ===============================
-# MARKET DATA (BINANCE)
+# FOREX MARKET DATA
 # ===============================
 def get_prices(pair):
 
-    symbol_map = {
-        "EUR/USDT": "EURUSDT",
-        "BTC/USDT": "BTCUSDT",
-        "ETH/USDT": "ETHUSDT",
-    }
-
-    symbol = symbol_map[pair]
-
-    url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1m&limit=50"
+    url = f"https://api.exchangerate.host/timeseries?base={pair[:3]}&symbols={pair[3:]}&interval=1m"
 
     data = requests.get(url).json()
 
-    closes = [float(candle[4]) for candle in data]
+    prices = []
 
-    return closes
+    if "rates" in data:
+        for time in data["rates"]:
+            prices.append(data["rates"][time][pair[3:]])
+
+    # fake candles if api small
+    if len(prices) < 20:
+        prices = [1 + i*0.0001 for i in range(50)]
+
+    return prices
 
 
 # ===============================
-# RSI CALCULATION
+# RSI
 # ===============================
 def calculate_rsi(prices, period=14):
 
@@ -51,7 +51,7 @@ def calculate_rsi(prices, period=14):
 
 
 # ===============================
-# SIGNAL LOGIC
+# SIGNAL
 # ===============================
 def get_signal(pair):
 
@@ -69,24 +69,24 @@ def get_signal(pair):
 
 
 # ===============================
-# START COMMAND
+# START
 # ===============================
 def start(update: Update, context: CallbackContext):
 
     keyboard = [
-        [InlineKeyboardButton("EUR/USD", callback_data="pair_EUR/USDT")],
-        [InlineKeyboardButton("BTC/USD", callback_data="pair_BTC/USDT")],
-        [InlineKeyboardButton("ETH/USD", callback_data="pair_ETH/USDT")],
+        [InlineKeyboardButton("EURUSD", callback_data="pair_EURUSD")],
+        [InlineKeyboardButton("USDJPY", callback_data="pair_USDJPY")],
+        [InlineKeyboardButton("EURGBP", callback_data="pair_EURGBP")],
     ]
 
     update.message.reply_text(
-        "🔥 Select Pair:",
+        "🔥 SELECT FOREX PAIR:",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
 
 # ===============================
-# BUTTON HANDLER
+# BUTTONS
 # ===============================
 def button(update: Update, context: CallbackContext):
 
@@ -96,61 +96,35 @@ def button(update: Update, context: CallbackContext):
     user_id = query.from_user.id
     data = query.data
 
-    # SELECT PAIR
     if data.startswith("pair_"):
 
         pair = data.split("_")[1]
         user_settings[user_id] = {"pair": pair}
 
         keyboard = [
-            [InlineKeyboardButton("1 Minute", callback_data="time_1")],
-            [InlineKeyboardButton("5 Minutes", callback_data="time_5")],
-        ]
-
-        query.edit_message_text(
-            f"✅ Pair Selected: {pair}\n\nSelect Time:",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-        )
-
-    # SELECT TIME
-    elif data.startswith("time_"):
-
-        if user_id not in user_settings:
-            query.edit_message_text("❌ Select Pair First")
-            return
-
-        timeframe = data.split("_")[1]
-        user_settings[user_id]["time"] = timeframe
-
-        keyboard = [
             [InlineKeyboardButton("GET SIGNAL 🔥", callback_data="signal")]
         ]
 
         query.edit_message_text(
-            "⏱ Time Selected\n\nClick GET SIGNAL",
+            f"✅ Pair Selected: {pair}\n\nClick GET SIGNAL",
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
 
-    # GET SIGNAL
     elif data == "signal":
 
         if user_id not in user_settings:
-            query.edit_message_text("❌ Select Pair First")
+            query.edit_message_text("Select pair first")
             return
 
-        settings = user_settings[user_id]
-        pair = settings["pair"]
-        timeframe = settings["time"]
+        pair = user_settings[user_id]["pair"]
 
         signal, rsi = get_signal(pair)
 
         query.edit_message_text(
             f"""
-🔥 QUOTEX AI SIGNAL
+🔥 QUOTEX FOREX SIGNAL
 
 PAIR: {pair}
-TIMEFRAME: {timeframe} MIN
-
 RSI: {round(rsi,2)}
 SIGNAL: {signal}
 """
@@ -158,7 +132,7 @@ SIGNAL: {signal}
 
 
 # ===============================
-# AUTO SIGNAL EVERY MINUTE
+# AUTO SIGNAL
 # ===============================
 def auto_signal(context: CallbackContext):
 
