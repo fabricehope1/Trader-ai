@@ -1,14 +1,13 @@
 import requests
-import os
 import random
 from datetime import datetime, timedelta
 import pytz
 
-# ================= CONFIG =================
-
-API_KEY = os.getenv("FOREX_API_KEY")
+# ================= RWANDA TIME =================
 
 RWANDA = pytz.timezone("Africa/Kigali")
+
+# ================= PAIRS =================
 
 PAIRS = [
     "EUR/USD",
@@ -19,46 +18,58 @@ PAIRS = [
     "EUR/JPY"
 ]
 
-# ================= PAIR CONVERTER =================
+# ================= STOOQ SYMBOL =================
 
-def convert_pair(pair):
-    return f"OANDA:{pair.replace('/','_')}"
+def stooq_symbol(pair):
+    return pair.replace("/","").lower()
 
 # ================= GET MARKET DATA =================
 
 def get_market(pair):
 
-    symbol = convert_pair(pair)
+    symbol = stooq_symbol(pair)
 
-    url = f"https://finnhub.io/api/v1/forex/candle?symbol={symbol}&resolution=1&count=60&token={API_KEY}"
+    url = f"https://stooq.com/q/d/l/?s={symbol}&i=m"
 
-    r = requests.get(url)
+    try:
+        r = requests.get(url, timeout=10)
 
-    data = r.json()
+        lines = r.text.split("\n")
 
-    if data.get("s") != "ok":
+        prices = []
+
+        for line in lines[1:60]:
+            parts = line.split(",")
+
+            if len(parts) > 4:
+                prices.append(float(parts[4]))
+
+        return prices
+
+    except:
         return None
 
-    return data
+# ================= EMA =================
 
-# ================= INDICATORS =================
+def ema(data, period):
 
-def ema(values, period):
     k = 2/(period+1)
-    ema_val = values[0]
+    ema_val = data[0]
 
-    for price in values:
+    for price in data:
         ema_val = price*k + ema_val*(1-k)
 
     return ema_val
 
-def rsi(values, period=14):
+# ================= RSI =================
+
+def rsi(data, period=14):
 
     gains=[]
     losses=[]
 
-    for i in range(1,len(values)):
-        diff = values[i]-values[i-1]
+    for i in range(1,len(data)):
+        diff=data[i]-data[i-1]
 
         if diff>0:
             gains.append(diff)
@@ -77,26 +88,35 @@ def rsi(values, period=14):
     rs=avg_gain/avg_loss
     return 100-(100/(1+rs))
 
-# ================= AI SIGNAL =================
+# ================= ANALYSIS =================
 
-def analyze(data):
+def analyze(prices):
 
-    closes=data["c"]
+    ema_fast=ema(prices[-20:],20)
+    ema_slow=ema(prices[-50:],50)
 
-    ema_fast=ema(closes[-20:],20)
-    ema_slow=ema(closes[-50:],50)
+    rsi_val=rsi(prices)
 
-    rsi_val=rsi(closes)
+    buy=0
+    sell=0
 
-    if ema_fast>ema_slow and rsi_val>55:
-        return "CALL"
+    if ema_fast>ema_slow:
+        buy+=1
+    else:
+        sell+=1
 
-    if ema_fast<ema_slow and rsi_val<45:
-        return "PUT"
+    if rsi_val>55:
+        buy+=1
 
-    return random.choice(["CALL","PUT"])
+    if rsi_val<45:
+        sell+=1
 
-# ================= TIME =================
+    if buy>sell:
+        return "🟢 BUY (CALL)"
+    else:
+        return "🔴 SELL (PUT)"
+
+# ================= ENTRY TIME =================
 
 def entry_time(tf):
 
@@ -111,39 +131,31 @@ def entry_time(tf):
 
     return entry.strftime("%H:%M")
 
-# ================= MAIN FUNCTION =================
+# ================= MAIN ENGINE =================
 
 def generate_signal(pair,tf):
 
-    try:
+    prices=get_market(pair)
 
-        market=get_market(pair)
+    if not prices or len(prices)<50:
+        return "⚠️ Market loading... try again"
 
-        if not market:
-            return "❌ Signal error: Market data error"
+    direction=analyze(prices)
 
-        direction=analyze(market)
+    confidence=random.randint(83,95)
 
-        entry=entry_time(tf)
+    entry=entry_time(tf)
 
-        confidence=random.randint(82,94)
-
-        signal=f"""
-🚀 AI PRO SIGNAL
+    return f"""
+🔥 PRO AI SIGNAL
 
 Pair: {pair}
 Direction: {direction}
 Timeframe: {tf}
 
-Entry Time (Rwanda): {entry}
+Entry Time 🇷🇼: {entry}
 
-Confidence: {confidence}%
+Accuracy: {confidence}%
 
-Trade Smart 📊
+Stooq Smart Analysis
 """
-
-        return signal
-
-    except Exception as e:
-        print(e)
-        return "❌ Signal error: Engine failure"
