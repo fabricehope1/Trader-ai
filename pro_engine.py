@@ -1,7 +1,6 @@
 import requests
 import os
-import random
-from datetime import datetime, timedelta
+from datetime import datetime,timedelta
 
 API_KEY=os.getenv("FOREX_API")
 
@@ -11,49 +10,61 @@ PAIRS=[
 "EUR/JPY","GBP/JPY","AUD/JPY"
 ]
 
+# ================= REAL MARKET PRICE =================
+
 def get_price(pair):
 
-    symbol=pair.replace("/","")
-
-    url=f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=1min&outputsize=1&apikey={API_KEY}"
-
     try:
+
+        url=f"https://api.twelvedata.com/time_series?symbol={pair}&interval=1min&outputsize=2&apikey={API_KEY}"
+
         r=requests.get(url).json()
 
-        if "values" in r:
-            return float(r["values"][0]["close"])
-    except:
-        pass
+        if "values" not in r:
+            print(r)
+            return None
 
-    return None
+        current=float(r["values"][0]["close"])
+        previous=float(r["values"][1]["close"])
 
+        return current,previous
+
+    except Exception as e:
+        print(e)
+        return None
+
+
+# ================= SIGNAL ENGINE =================
 
 def generate_signal(pair,timeframe):
 
-    price=get_price(pair)
+    data=get_price(pair)
 
-    if price is None:
+    if data is None:
         return "⚠️ Market Data Error"
 
-    momentum=random.uniform(-1,1)
+    current,previous=data
 
-    signal="UP 📈" if momentum>0 else "DOWN 📉"
+    # REAL TREND ANALYSIS
+    if current>previous:
+        signal="UP 📈"
+    else:
+        signal="DOWN 📉"
 
-    rsi=random.randint(40,60)
-
-    entry=datetime.now()+timedelta(minutes=1)
+    # REAL ENTRY TIME
+    entry=datetime.utcnow()+timedelta(minutes=1)
 
     return f"""
-🔥 LIVE FOREX AI SIGNAL
+🔥 LIVE AI SIGNAL
 
 PAIR: {pair}
-PRICE: {price}
 
-RSI: {rsi}
+PRICE: {current}
 
 SIGNAL: {signal}
 
-ENTRY TIME: {entry.strftime('%H:%M')}
+ENTRY TIME: {entry.strftime('%H:%M')} UTC
 TIMEFRAME: {timeframe}
+
 EXPIRY: 1 MIN
 """
