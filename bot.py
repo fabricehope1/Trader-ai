@@ -10,9 +10,9 @@ TOKEN = os.getenv("BOT_TOKEN")
 
 user_settings = {}
 
-# ===============================
-# FOREX DATA
-# ===============================
+# ==================================================
+# MARKET DATA
+# ==================================================
 def get_prices(pair):
 
     url = f"https://api.exchangerate.host/timeseries?base={pair[:3]}&symbols={pair[3:]}"
@@ -24,22 +24,23 @@ def get_prices(pair):
         for t in data["rates"]:
             prices.append(data["rates"][t][pair[3:]])
 
-    if len(prices) < 40:
-        prices = [1 + i*0.0001 for i in range(60)]
+    # fallback candles
+    if len(prices) < 50:
+        prices = [1 + i*0.0002 for i in range(60)]
 
     return prices
 
 
-# ===============================
-# AI ANALYSIS
-# ===============================
+# ==================================================
+# ULTRA AI ENGINE
+# ==================================================
 def ai_signal(pair):
 
     prices = get_prices(pair)
 
     series = pd.Series(prices)
 
-    # RSI
+    # ===== RSI =====
     delta = series.diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
@@ -51,43 +52,61 @@ def ai_signal(pair):
     rsi = 100 - (100 / (1 + rs))
     rsi_value = rsi.iloc[-1]
 
-    # TREND FILTER
-    ma_fast = series.rolling(5).mean().iloc[-1]
-    ma_slow = series.rolling(20).mean().iloc[-1]
+    # ===== EMA TREND =====
+    ema_fast = series.ewm(span=5).mean().iloc[-1]
+    ema_slow = series.ewm(span=20).mean().iloc[-1]
 
-    # AI DECISION
-    if rsi_value < 35 and ma_fast > ma_slow:
-        signal = "UP 📈"
-    elif rsi_value > 65 and ma_fast < ma_slow:
-        signal = "DOWN 📉"
+    # ===== MOMENTUM =====
+    momentum = series.iloc[-1] - series.iloc[-5]
+
+    score_up = 0
+    score_down = 0
+
+    if rsi_value < 50:
+        score_up += 1
     else:
-        signal = "WAIT ⏳"
+        score_down += 1
 
-    return signal, rsi_value
+    if ema_fast > ema_slow:
+        score_up += 1
+    else:
+        score_down += 1
+
+    if momentum > 0:
+        score_up += 1
+    else:
+        score_down += 1
+
+    if score_up >= score_down:
+        signal = "UP 📈"
+        confidence = 70 + score_up * 10
+        trend = "STRONG UP"
+    else:
+        signal = "DOWN 📉"
+        confidence = 70 + score_down * 10
+        trend = "STRONG DOWN"
+
+    return signal, rsi_value, confidence, trend
 
 
-# ===============================
-# TIME
-# ===============================
+# ==================================================
+# ENTRY TIME
+# ==================================================
 def entry_time():
-
     now = datetime.now()
     entry = now + timedelta(minutes=1)
-
     return now.strftime("%H:%M"), entry.strftime("%H:%M")
 
 
-# ===============================
+# ==================================================
 # MENUS
-# ===============================
+# ==================================================
 def pair_menu():
-
     keyboard = [
         [InlineKeyboardButton("EURUSD", callback_data="pair_EURUSD")],
         [InlineKeyboardButton("USDJPY", callback_data="pair_USDJPY")],
         [InlineKeyboardButton("EURGBP", callback_data="pair_EURGBP")],
     ]
-
     return InlineKeyboardMarkup(keyboard)
 
 
@@ -108,20 +127,19 @@ def signal_menu():
     return InlineKeyboardMarkup(keyboard)
 
 
-# ===============================
+# ==================================================
 # START
-# ===============================
+# ==================================================
 def start(update: Update, context: CallbackContext):
-
     update.message.reply_text(
-        "🔥 QUOTEX AI BOT\n\nSelect Pair",
+        "🔥 ULTRA QUOTEX AI BOT\n\nSelect Pair",
         reply_markup=pair_menu(),
     )
 
 
-# ===============================
+# ==================================================
 # BUTTON HANDLER
-# ===============================
+# ==================================================
 def button(update: Update, context: CallbackContext):
 
     query = update.callback_query
@@ -132,22 +150,15 @@ def button(update: Update, context: CallbackContext):
 
     # BACK BUTTONS
     if data == "back_pair":
-        query.edit_message_text(
-            "Select Pair",
-            reply_markup=pair_menu(),
-        )
+        query.edit_message_text("Select Pair", reply_markup=pair_menu())
         return
 
     if data == "back_time":
-        query.edit_message_text(
-            "Select Timeframe",
-            reply_markup=timeframe_menu(),
-        )
+        query.edit_message_text("Select Timeframe", reply_markup=timeframe_menu())
         return
 
-    # PAIR
+    # SELECT PAIR
     if data.startswith("pair_"):
-
         pair = data.split("_")[1]
         user_settings[user_id] = {"pair": pair}
 
@@ -156,9 +167,8 @@ def button(update: Update, context: CallbackContext):
             reply_markup=timeframe_menu(),
         )
 
-    # TIMEFRAME
+    # SELECT TIMEFRAME
     elif data.startswith("time_"):
-
         timeframe = data.split("_")[1]
         user_settings[user_id]["time"] = timeframe
 
@@ -167,7 +177,7 @@ def button(update: Update, context: CallbackContext):
             reply_markup=signal_menu(),
         )
 
-    # SIGNAL
+    # GET SIGNAL
     elif data == "signal":
 
         settings = user_settings[user_id]
@@ -175,13 +185,13 @@ def button(update: Update, context: CallbackContext):
         pair = settings["pair"]
         timeframe = settings["time"]
 
-        signal, rsi = ai_signal(pair)
+        signal, rsi, confidence, trend = ai_signal(pair)
 
         current_time, entry = entry_time()
 
         query.edit_message_text(
-            f"""
-🔥 QUOTEX AI SIGNAL
+f"""
+🔥 ULTRA AI SIGNAL
 
 PAIR: {pair}
 TIMEFRAME: {timeframe} MIN
@@ -190,19 +200,21 @@ CURRENT TIME: {current_time}
 ENTRY TIME: {entry}
 
 AI RSI: {round(rsi,2)}
+TREND: {trend}
+
 SIGNAL: {signal}
+CONFIDENCE: {confidence}%
 """,
             reply_markup=signal_menu(),
         )
 
 
-# ===============================
+# ==================================================
 # MAIN
-# ===============================
+# ==================================================
 def main():
 
     updater = Updater(TOKEN, use_context=True)
-
     dp = updater.dispatcher
 
     dp.add_handler(CommandHandler("start", start))
