@@ -1,55 +1,31 @@
 import requests
 import os
-import random
-from datetime import datetime, timedelta
 
-API_KEY = os.getenv("FOREX_API")
+API_KEY = os.getenv("TWELVE_API")
 
-PAIRS = [
-    "EUR/USD","USD/JPY","EUR/GBP","GBP/USD",
-    "AUD/USD","USD/CAD","NZD/USD",
-    "EUR/JPY","GBP/JPY","AUD/JPY"
-]
+def get_price(pair, timeframe):
 
-def get_price(pair):
-    try:
-        url=f"https://api.twelvedata.com/price?symbol={pair}&apikey={API_KEY}"
-        r=requests.get(url).json()
-        if "price" in r:
-            return float(r["price"])
-    except:
-        pass
-    return None
+    pair = pair.replace("/", "")
+    
+    url = f"https://api.twelvedata.com/time_series?symbol={pair}&interval={timeframe}&outputsize=30&apikey={API_KEY}"
 
-def generate_signal(pair,timeframe):
+    r = requests.get(url).json()
 
-    price=get_price(pair)
+    if "values" not in r:
+        return None
 
-    if price is None:
-        return "⚠️ Market data unavailable"
+    closes = [float(x["close"]) for x in r["values"]]
 
-    rsi=random.randint(35,65)
+    avg = sum(closes)/len(closes)
+    last = closes[0]
 
-    if rsi<45:
-        signal="UP 📈"
-    elif rsi>55:
-        signal="DOWN 📉"
+    if last > avg:
+        direction = "UP 🟢"
     else:
-        signal=random.choice(["UP 📈","DOWN 📉"])
+        direction = "DOWN 🔴"
 
-    entry=datetime.now()+timedelta(minutes=1)
-
-    return f"""
-🔥 LIVE AI SIGNAL
-
-PAIR: {pair}
-PRICE: {price}
-
-RSI: {rsi}
-
-SIGNAL: {signal}
-
-ENTRY TIME: {entry.strftime('%H:%M')}
-TIMEFRAME: {timeframe}
-EXPIRY: 1 MIN
-"""
+    return {
+        "pair": pair,
+        "direction": direction,
+        "price": last
+    }
