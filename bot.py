@@ -1,34 +1,40 @@
 import os
 import requests
 import pandas as pd
-from telegram import (
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    Update,
-)
-from telegram.ext import (
-    Updater,
-    CommandHandler,
-    CallbackQueryHandler,
-    CallbackContext,
-)
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, CallbackContext
 
 TOKEN = os.getenv("BOT_TOKEN")
 
 user_settings = {}
 
 # ===============================
-# MARKET DATA
+# MARKET DATA (BINANCE)
 # ===============================
 def get_prices(pair):
-    symbol = pair.replace("/", "") + "T"
+
+    symbol_map = {
+        "EUR/USDT": "EURUSDT",
+        "BTC/USDT": "BTCUSDT",
+        "ETH/USDT": "ETHUSDT",
+    }
+
+    symbol = symbol_map[pair]
+
     url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1m&limit=50"
+
     data = requests.get(url).json()
+
     closes = [float(candle[4]) for candle in data]
+
     return closes
 
 
+# ===============================
+# RSI CALCULATION
+# ===============================
 def calculate_rsi(prices, period=14):
+
     series = pd.Series(prices)
     delta = series.diff()
 
@@ -44,7 +50,11 @@ def calculate_rsi(prices, period=14):
     return rsi.iloc[-1]
 
 
+# ===============================
+# SIGNAL LOGIC
+# ===============================
 def get_signal(pair):
+
     prices = get_prices(pair)
     rsi = calculate_rsi(prices)
 
@@ -62,6 +72,7 @@ def get_signal(pair):
 # START COMMAND
 # ===============================
 def start(update: Update, context: CallbackContext):
+
     keyboard = [
         [InlineKeyboardButton("EUR/USD", callback_data="pair_EUR/USDT")],
         [InlineKeyboardButton("BTC/USD", callback_data="pair_BTC/USDT")],
@@ -78,14 +89,16 @@ def start(update: Update, context: CallbackContext):
 # BUTTON HANDLER
 # ===============================
 def button(update: Update, context: CallbackContext):
+
     query = update.callback_query
     query.answer()
 
     user_id = query.from_user.id
-
     data = query.data
 
+    # SELECT PAIR
     if data.startswith("pair_"):
+
         pair = data.split("_")[1]
         user_settings[user_id] = {"pair": pair}
 
@@ -99,7 +112,13 @@ def button(update: Update, context: CallbackContext):
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
 
+    # SELECT TIME
     elif data.startswith("time_"):
+
+        if user_id not in user_settings:
+            query.edit_message_text("❌ Select Pair First")
+            return
+
         timeframe = data.split("_")[1]
         user_settings[user_id]["time"] = timeframe
 
@@ -112,18 +131,25 @@ def button(update: Update, context: CallbackContext):
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
 
+    # GET SIGNAL
     elif data == "signal":
+
+        if user_id not in user_settings:
+            query.edit_message_text("❌ Select Pair First")
+            return
+
         settings = user_settings[user_id]
         pair = settings["pair"]
+        timeframe = settings["time"]
 
         signal, rsi = get_signal(pair)
 
         query.edit_message_text(
             f"""
-🔥 QUOTEX SIGNAL
+🔥 QUOTEX AI SIGNAL
 
 PAIR: {pair}
-TIMEFRAME: 1 MIN
+TIMEFRAME: {timeframe} MIN
 
 RSI: {round(rsi,2)}
 SIGNAL: {signal}
@@ -135,8 +161,11 @@ SIGNAL: {signal}
 # AUTO SIGNAL EVERY MINUTE
 # ===============================
 def auto_signal(context: CallbackContext):
+
     for user_id, settings in user_settings.items():
+
         pair = settings["pair"]
+
         signal, rsi = get_signal(pair)
 
         context.bot.send_message(
@@ -155,6 +184,7 @@ SIGNAL: {signal}
 # MAIN
 # ===============================
 def main():
+
     updater = Updater(TOKEN, use_context=True)
 
     dp = updater.dispatcher
