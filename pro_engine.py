@@ -1,70 +1,146 @@
-import requests
 import os
-from datetime import datetime,timedelta
+import requests
+import pandas as pd
+import time
 
-API_KEY=os.getenv("FOREX_API")
+API_KEY = os.getenv("FOREX_API")
 
-PAIRS=[
-"EUR/USD","USD/JPY","EUR/GBP","GBP/USD",
-"AUD/USD","USD/CAD","NZD/USD",
-"EUR/JPY","GBP/JPY","AUD/JPY"
+PAIRS = [
+    "EUR/USD",
+    "GBP/USD",
+    "USD/JPY",
+    "AUD/USD",
+    "USD/CAD"
 ]
 
-# ================= REAL MARKET PRICE =================
+# =========================
+# GET MARKET DATA
+# =========================
+def get_market_data(symbol):
 
-def get_price(pair):
+    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=1min&outputsize=100&apikey={API_KEY}"
 
-    try:
+    r = requests.get(url)
+    data = r.json()
 
-        url=f"https://api.twelvedata.com/time_series?symbol={pair}&interval=1min&outputsize=2&apikey={API_KEY}"
-
-        r=requests.get(url).json()
-
-        if "values" not in r:
-            print(r)
-            return None
-
-        current=float(r["values"][0]["close"])
-        previous=float(r["values"][1]["close"])
-
-        return current,previous
-
-    except Exception as e:
-        print(e)
+    if "values" not in data:
         return None
 
+    df = pd.DataFrame(data["values"])
+    df = df.astype(float)
+    df = df.iloc[::-1]
 
-# ================= SIGNAL ENGINE =================
+    return df
 
-def generate_signal(pair,timeframe):
 
-    data=get_price(pair)
+# =========================
+# RSI
+# =========================
+def calculate_rsi(df, period=14):
 
-    if data is None:
-        return "⚠️ Market Data Error"
+    delta = df["close"].diff()
 
-    current,previous=data
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
 
-    # REAL TREND ANALYSIS
-    if current>previous:
-        signal="UP 📈"
-    else:
-        signal="DOWN 📉"
+    avg_gain = gain.rolling(period).mean()
+    avg_loss = loss.rolling(period).mean()
 
-    # REAL ENTRY TIME
-    entry=datetime.utcnow()+timedelta(minutes=1)
+    rs = avg_gain / avg_loss
+    rsi = 100 - (100 / (1 + rs))
 
-    return f"""
-🔥 LIVE AI SIGNAL
+    return rsi.iloc[-1]
 
-PAIR: {pair}
 
-PRICE: {current}
+# =========================
+# EMA
+# =========================
+def calculate_ema(df, period):
 
-SIGNAL: {signal}
+    return df["close"].ewm(span=period).mean().iloc[-1]
 
-ENTRY TIME: {entry.strftime('%H:%M')} UTC
-TIMEFRAME: {timeframe}
 
-EXPIRY: 1 MIN
-"""
+# =========================
+# MACD
+# =========================
+def calculate_macd(df):
+
+    ema12 = df["close"].ewm(span=12).mean()
+    ema26 = df["close"].ewm(span=26).mean()
+
+    macd = ema12 - ema26
+    signal = macd.ewm(span=9).mean()
+
+    return macd.iloc[-1], signal.iloc[-1]
+
+
+# =========================
+# SUPPORT / RESISTANCE
+# =========================
+def support_resistance(df):
+
+    support = df["low"].tail(20).min()
+    resistance = df["high"].tail(20).max()
+
+    return support, resistance
+
+
+# =========================
+# SIGNAL ENGINE
+# =========================
+def generate_signal():
+
+    results = []
+
+    for pair in PAIRS:
+
+        df = get_market_data(pair)
+
+        if df is None:
+            continue
+
+        # ⏳ Analysis time
+        time.sleep(2)
+
+        price = df["close"].iloc[-1]
+
+        rsi = calculate_rsi(df)
+        ema20 = calculate_ema(df, 20)
+        ema50 = calculate_ema(df, 50)
+
+        macd, macd_signal = calculate_macd(df)
+
+        support, resistance = support_resistance(df)
+
+        signal = "WAIT"
+
+        # ======================
+        # BUY CONDITIONS
+        # ======================
+        if (
+            rsi < 35 and
+            price > ema20 > ema50 and
+            macd > macd_signal and
+            price > support
+        ):
+            signal = "BUY 🟢"
+
+        # ======================
+        # SELL CONDITIONS
+        # ======================
+        elif (
+            rsi > 65 and
+            price < ema20 < ema50 and
+            macd < macd_signal and
+            price < resistance
+        ):
+            signal = "SELL 🔴"
+
+        results.append({
+            "pair": pair,
+            "signal": signal,
+            "price": price,
+            "rsi": round(rsi,2)
+        })
+
+    return results
