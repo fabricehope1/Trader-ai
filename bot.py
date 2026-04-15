@@ -1,350 +1,205 @@
-import os
+import telebot
 import json
-import requests
-import pandas as pd
-import random
-from datetime import datetime, timedelta
+import os
+from telebot.types import InlineKeyboardMarkup,InlineKeyboardButton
+from pro_engine import generate_signal,PAIRS
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters, CallbackContext
+TOKEN=os.getenv("BOT_TOKEN")
+ADMIN_ID=8448217655
 
-TOKEN = os.getenv("BOT_TOKEN")
-FOREX_API = os.getenv("FOREX_API")
-ADMIN_ID = 8448217655
+bot=telebot.TeleBot(TOKEN)
 
-DATA_FILE = "users.json"
+PAYMENT_ADDRESS="0xA7123932DF237A24ad8c251502C169d744dd6D41"
 
-# =====================
-# DATABASE
-# =====================
+waiting_broadcast={}
+waiting_payment={}
+
+# ================= DATABASE =================
 
 def load_users():
-    if not os.path.exists(DATA_FILE):
-        return {"vip_users": [], "pending": {}}
-
-    with open(DATA_FILE) as f:
-        return json.load(f)
-
+    try:
+        return json.load(open("users.json"))
+    except:
+        return {}
 
 def save_users(data):
-    with open(DATA_FILE,"w") as f:
-        json.dump(data,f)
+    json.dump(data,open("users.json","w"))
 
+users=load_users()
 
-def is_vip(user_id):
-    if user_id == ADMIN_ID:
-        return True
+# ================= MAIN MENU =================
 
-    data = load_users()
-    return user_id in data["vip_users"]
+def main_menu(chat_id):
 
+    kb=InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("📊 Get Signal",callback_data="signal"))
+    kb.add(InlineKeyboardButton("💳 Payment",callback_data="payment"))
 
-user_settings = {}
+    if chat_id==ADMIN_ID:
+        kb.add(InlineKeyboardButton("⚙ ADMIN PANEL",callback_data="admin"))
 
-# =====================
-# LIVE FOREX DATA
-# =====================
+    bot.send_message(chat_id,"Main Menu",reply_markup=kb)
 
-def get_live_price(pair):
+# ================= START =================
 
-    symbol = pair.replace("/","")
+@bot.message_handler(commands=["start"])
+def start(msg):
 
-    url=f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=1min&outputsize=50&apikey={FOREX_API}"
+    uid=str(msg.chat.id)
 
-    r=requests.get(url).json()
+    if uid not in users:
+        users[uid]={"approved":False}
+        save_users(users)
 
-    if "values" not in r:
-        return None
+    main_menu(msg.chat.id)
 
-    prices=[float(c["close"]) for c in r["values"]]
-    prices.reverse()
+# ================= CALLBACK =================
 
-    return prices
+@bot.callback_query_handler(func=lambda call:True)
+def callback(call):
 
+    uid=str(call.message.chat.id)
 
-def calculate_rsi(prices,period=14):
+# BACK
+    if call.data=="back":
+        main_menu(call.message.chat.id)
 
-    series=pd.Series(prices)
-    delta=series.diff()
+# PAYMENT
+    elif call.data=="payment":
 
-    gain=delta.clip(lower=0)
-    loss=-delta.clip(upper=0)
+        kb=InlineKeyboardMarkup()
+        kb.add(InlineKeyboardButton("📋 Copy Address",callback_data="copy"))
+        kb.add(InlineKeyboardButton("📤 Upload Payment Proof",callback_data="upload"))
+        kb.add(InlineKeyboardButton("⬅ Back",callback_data="back"))
 
-    avg_gain=gain.rolling(period).mean()
-    avg_loss=loss.rolling(period).mean()
+        bot.edit_message_text(
+            f"Send USDT BEP20 Payment:\n\n{PAYMENT_ADDRESS}",
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=kb)
 
-    rs=avg_gain/avg_loss
-    rsi=100-(100/(1+rs))
+    elif call.data=="copy":
+        bot.answer_callback_query(call.id,"Address Copied ✅",show_alert=True)
+        bot.send_message(call.message.chat.id,PAYMENT_ADDRESS)
 
-    return rsi.iloc[-1]
+    elif call.data=="upload":
+        waiting_payment[call.message.chat.id]=True
+        bot.send_message(call.message.chat.id,"Send payment screenshot.")
 
+# SIGNAL LOCK
+    elif call.data=="signal":
 
-def generate_signal(pair):
+        if not users[uid]["approved"]:
+            bot.answer_callback_query(call.id,"🔒 Access Locked")
+            return
 
-    prices=get_live_price(pair)
+        kb=InlineKeyboardMarkup()
+        kb.add(
+            InlineKeyboardButton("M1",callback_data="tf_M1"),
+            InlineKeyboardButton("M5",callback_data="tf_M5"))
+        kb.add(
+            InlineKeyboardButton("M15",callback_data="tf_M15"))
+        kb.add(InlineKeyboardButton("⬅ Back",callback_data="back"))
 
-    if not prices:
-        return "Market Error",0,"00:00"
+        bot.edit_message_text(
+            "Select Timeframe",
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=kb)
 
-    rsi=calculate_rsi(prices)
+# TIMEFRAME
+    elif call.data.startswith("tf_"):
 
-    trend_up=prices[-1]>prices[-5]
+        timeframe=call.data.split("_")[1]
+        pair=PAIRS[0]
 
-    if rsi<45 and trend_up:
-        signal="UP 📈"
-    elif rsi>55 and not trend_up:
-        signal="DOWN 📉"
-    else:
-        signal=random.choice(["UP 📈","DOWN 📉"])
+        signal=generate_signal(pair,timeframe)
 
-    entry=(datetime.utcnow()+timedelta(minutes=1)).strftime("%H:%M")
+        bot.send_message(call.message.chat.id,signal)
 
-    return signal,round(rsi,2),entry
+# ADMIN PANEL
+    elif call.data=="admin" and call.message.chat.id==ADMIN_ID:
 
-# =====================
-# PAIRS
-# =====================
+        kb=InlineKeyboardMarkup()
+        kb.add(InlineKeyboardButton("📩 Broadcast",callback_data="broadcast"))
+        kb.add(InlineKeyboardButton("👥 Pending Users",callback_data="pending"))
+        kb.add(InlineKeyboardButton("⬅ Back",callback_data="back"))
 
-PAIRS=[
-"EUR/USD","USD/JPY","GBP/USD","EUR/GBP",
-"AUD/USD","USD/CAD","EUR/JPY","GBP/JPY",
-"NZD/USD","USD/CHF"
-]
+        bot.edit_message_text(
+            "ADMIN PANEL",
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=kb)
 
-# =====================
-# START
-# =====================
+# BROADCAST
+    elif call.data=="broadcast":
+        waiting_broadcast[call.message.chat.id]=True
+        bot.send_message(call.message.chat.id,"Send message/photo to broadcast.")
 
-def start(update,context):
+# PENDING USERS
+    elif call.data=="pending":
 
-    user_id=update.message.from_user.id
+        for user,data in users.items():
+            if not data["approved"]:
+                kb=InlineKeyboardMarkup()
+                kb.add(
+                    InlineKeyboardButton("✅ Approve",callback_data=f"approve_{user}"),
+                    InlineKeyboardButton("❌ Reject",callback_data=f"reject_{user}")
+                )
 
-    if user_id==ADMIN_ID:
-        kb=[
-            [InlineKeyboardButton("📊 Get Signal",callback_data="pairs")],
-            [InlineKeyboardButton("👑 Admin Panel",callback_data="admin")]
-        ]
-    else:
-        kb=[
-            [InlineKeyboardButton("📊 Get Signal",callback_data="pairs")],
-            [InlineKeyboardButton("💳 Buy VIP",callback_data="buy")]
-        ]
+                bot.send_message(call.message.chat.id,f"User waiting: {user}",reply_markup=kb)
 
-    update.message.reply_text(
-        "🤖 PRO AI FOREX BOT",
-        reply_markup=InlineKeyboardMarkup(kb)
-    )
+# APPROVE
+    elif call.data.startswith("approve_"):
 
-# =====================
-# BUTTON HANDLER
-# =====================
+        user=call.data.split("_")[1]
+        users[user]["approved"]=True
+        save_users(users)
 
-def button(update,context):
+        bot.send_message(user,"✅ Payment Approved. Access Granted.")
+        bot.answer_callback_query(call.id,"Approved")
 
-    query=update.callback_query
-    query.answer()
+# REJECT
+    elif call.data.startswith("reject_"):
 
-    user_id=query.from_user.id
-    data=query.data
+        user=call.data.split("_")[1]
+        bot.send_message(user,"❌ Payment Rejected")
+        bot.answer_callback_query(call.id,"Rejected")
 
-    # BACK
-    if data=="back":
-        start(update,context)
+# ================= MESSAGE HANDLER =================
+
+@bot.message_handler(content_types=["text","photo"])
+def messages(msg):
+
+    uid=msg.chat.id
+
+# PAYMENT PROOF
+    if uid in waiting_payment:
+
+        bot.forward_message(ADMIN_ID,uid,msg.message_id)
+        bot.send_message(uid,"✅ Proof sent to admin")
+
+        waiting_payment.pop(uid)
         return
 
-    # SHOW PAIRS
-    if data=="pairs":
+# BROADCAST
+    if uid in waiting_broadcast:
 
-        buttons=[]
+        sent=0
 
-        for p in PAIRS:
-            if is_vip(user_id):
-                buttons.append([InlineKeyboardButton(p,callback_data=f"pair_{p}")])
-            else:
-                buttons.append([InlineKeyboardButton(f"{p} 🔒",callback_data="locked")])
+        for user in users:
+            try:
+                if msg.content_type=="text":
+                    bot.send_message(user,msg.text)
+                else:
+                    bot.send_photo(user,msg.photo[-1].file_id,caption=msg.caption)
+                sent+=1
+            except:
+                pass
 
-        buttons.append([InlineKeyboardButton("⬅ Back",callback_data="back")])
+        bot.send_message(uid,f"✅ Broadcast sent to {sent} users")
 
-        query.edit_message_text(
-            "Select Pair:",
-            reply_markup=InlineKeyboardMarkup(buttons)
-        )
+        waiting_broadcast.pop(uid)
+        return
 
-    elif data=="locked":
-        query.answer("🔒 Buy VIP to unlock signals",show_alert=True)
-
-    # SELECT PAIR
-    elif data.startswith("pair_"):
-
-        pair=data.split("_")[1]
-        user_settings[user_id]={"pair":pair}
-
-        kb=[
-            [InlineKeyboardButton("GET SIGNAL 🔥",callback_data="signal")],
-            [InlineKeyboardButton("⬅ Back",callback_data="pairs")]
-        ]
-
-        query.edit_message_text(
-            f"PAIR SELECTED: {pair}",
-            reply_markup=InlineKeyboardMarkup(kb)
-        )
-
-    # SIGNAL
-    elif data=="signal":
-
-        if not is_vip(user_id):
-            query.answer("🔒 VIP required",show_alert=True)
-            return
-
-        pair=user_settings[user_id]["pair"]
-
-        signal,rsi,entry=generate_signal(pair)
-
-        kb=[[InlineKeyboardButton("⬅ Back",callback_data="pairs")]]
-
-        query.edit_message_text(
-f"""🔥 LIVE AI SIGNAL
-
-PAIR: {pair}
-
-RSI: {rsi}
-
-SIGNAL: {signal}
-
-ENTRY TIME: {entry}
-EXPIRY: 1 MIN
-""",
-reply_markup=InlineKeyboardMarkup(kb)
-)
-
-    # BUY VIP
-    elif data=="buy":
-
-        kb=[
-            [InlineKeyboardButton("📋 Copy Payment Address",callback_data="copy")],
-            [InlineKeyboardButton("⬆ Upload Payment Proof",callback_data="proof")],
-            [InlineKeyboardButton("⬅ Back",callback_data="back")]
-        ]
-
-        query.edit_message_text(
-"""
-💳 VIP PAYMENT
-
-Network: BEP20
-Coin: CRYPTO USD
-
-Address:
-0xA7123932DF237A24ad8c251502C169d744dd6D41
-""",
-reply_markup=InlineKeyboardMarkup(kb)
-)
-
-    elif data=="copy":
-        query.answer("Address copied ✔")
-
-    elif data=="proof":
-        context.bot.send_message(user_id,"Send payment screenshot.")
-
-    # ADMIN PANEL
-    elif data=="admin":
-
-        if user_id!=ADMIN_ID:
-            return
-
-        kb=[
-            [InlineKeyboardButton("📥 Pending Payments",callback_data="pending")],
-            [InlineKeyboardButton("📢 Broadcast",callback_data="broadcast")],
-            [InlineKeyboardButton("⬅ Back",callback_data="back")]
-        ]
-
-        query.edit_message_text(
-            "ADMIN PANEL",
-            reply_markup=InlineKeyboardMarkup(kb)
-        )
-
-    elif data=="pending":
-
-        data_users=load_users()
-
-        if not data_users["pending"]:
-            query.edit_message_text("No pending users")
-            return
-
-        for uid in data_users["pending"]:
-            context.bot.send_message(
-                ADMIN_ID,
-                f"User waiting approval: {uid}",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("✅ Approve",callback_data=f"approve_{uid}")],
-                    [InlineKeyboardButton("❌ Reject",callback_data=f"reject_{uid}")]
-                ])
-            )
-
-    elif data.startswith("approve_"):
-
-        uid=int(data.split("_")[1])
-
-        data_users=load_users()
-        data_users["vip_users"].append(uid)
-        del data_users["pending"][str(uid)]
-
-        save_users(data_users)
-
-        context.bot.send_message(uid,"✅ VIP ACTIVATED")
-
-    elif data.startswith("reject_"):
-
-        uid=int(data.split("_")[1])
-
-        data_users=load_users()
-        del data_users["pending"][str(uid)]
-
-        save_users(data_users)
-
-        context.bot.send_message(uid,"❌ Payment rejected")
-
-    elif data=="broadcast":
-        context.bot.send_message(ADMIN_ID,"Send message to broadcast.")
-
-
-# =====================
-# PAYMENT PROOF HANDLER
-# =====================
-
-def proof_handler(update,context):
-
-    user_id=update.message.from_user.id
-
-    if update.message.photo:
-
-        data_users=load_users()
-        data_users["pending"][str(user_id)]="waiting"
-        save_users(data_users)
-
-        context.bot.forward_message(
-            ADMIN_ID,
-            user_id,
-            update.message.message_id
-        )
-
-        update.message.reply_text("Payment sent for approval ✔")
-
-
-# =====================
-# MAIN
-# =====================
-
-def main():
-
-    updater=Updater(TOKEN,use_context=True)
-    dp=updater.dispatcher
-
-    dp.add_handler(CommandHandler("start",start))
-    dp.add_handler(CallbackQueryHandler(button))
-    dp.add_handler(MessageHandler(Filters.photo,proof_handler))
-
-    updater.start_polling()
-    updater.idle()
-
-if __name__=="__main__":
-    main()
+bot.infinity_polling()
