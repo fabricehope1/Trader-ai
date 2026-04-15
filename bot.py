@@ -1,7 +1,7 @@
 import telebot
 import json
 import os
-from telebot.types import InlineKeyboardMarkup,InlineKeyboardButton
+from telebot.types import ReplyKeyboardMarkup,KeyboardButton
 from pro_engine import generate_signal,PAIRS
 
 TOKEN=os.getenv("BOT_TOKEN")
@@ -28,18 +28,24 @@ def save_users(data):
 
 users=load_users()
 
-# ================= MAIN MENU =================
+# ================= MENUS =================
 
 def main_menu(chat_id):
 
-    kb=InlineKeyboardMarkup()
-    kb.add(InlineKeyboardButton("📊 Get Signal",callback_data="signal"))
-    kb.add(InlineKeyboardButton("💳 Payment",callback_data="payment"))
+    kb=ReplyKeyboardMarkup(resize_keyboard=True)
+
+    kb.add("📊 Get Signal")
+    kb.add("💳 Payment")
 
     if chat_id==ADMIN_ID:
-        kb.add(InlineKeyboardButton("⚙ ADMIN PANEL",callback_data="admin"))
+        kb.add("⚙ ADMIN PANEL")
 
     bot.send_message(chat_id,"Main Menu",reply_markup=kb)
+
+def back_menu(chat_id,text):
+    kb=ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.add("⬅ Back")
+    bot.send_message(chat_id,text,reply_markup=kb)
 
 # ================= START =================
 
@@ -50,168 +56,139 @@ def start(msg):
 
     if uid not in users:
         users[uid]={"approved":False}
-        save_users(users)
+
+    # ADMIN AUTO ACCESS
+    if msg.chat.id==ADMIN_ID:
+        users[uid]["approved"]=True
+
+    save_users(users)
 
     main_menu(msg.chat.id)
 
-# ================= CALLBACK =================
-
-@bot.callback_query_handler(func=lambda call:True)
-def callback(call):
-
-    uid=str(call.message.chat.id)
-
-# BACK
-    if call.data=="back":
-        main_menu(call.message.chat.id)
-
-# PAYMENT
-    elif call.data=="payment":
-
-        kb=InlineKeyboardMarkup()
-        kb.add(InlineKeyboardButton("📋 Copy Address",callback_data="copy"))
-        kb.add(InlineKeyboardButton("📤 Upload Payment Proof",callback_data="upload"))
-        kb.add(InlineKeyboardButton("⬅ Back",callback_data="back"))
-
-        bot.edit_message_text(
-            f"Send USDT BEP20 Payment:\n\n{PAYMENT_ADDRESS}",
-            call.message.chat.id,
-            call.message.message_id,
-            reply_markup=kb)
-
-    elif call.data=="copy":
-        bot.answer_callback_query(call.id,"Address Copied ✅",show_alert=True)
-        bot.send_message(call.message.chat.id,PAYMENT_ADDRESS)
-
-    elif call.data=="upload":
-        waiting_payment[call.message.chat.id]=True
-        bot.send_message(call.message.chat.id,"Send payment screenshot.")
-
-# ================= GET SIGNAL =================
-
-    elif call.data=="signal":
-
-        if not users[uid]["approved"]:
-            bot.answer_callback_query(call.id,"🔒 Access Locked")
-            return
-
-        kb=InlineKeyboardMarkup()
-
-        for p in PAIRS:
-            kb.add(InlineKeyboardButton(p,callback_data=f"pair_{p}"))
-
-        kb.add(InlineKeyboardButton("⬅ Back",callback_data="back"))
-
-        bot.edit_message_text(
-            "Select Pair",
-            call.message.chat.id,
-            call.message.message_id,
-            reply_markup=kb)
-
-# ================= SELECT PAIR =================
-
-    elif call.data.startswith("pair_"):
-
-        pair=call.data.split("_")[1]
-        user_pair[call.message.chat.id]=pair
-
-        kb=InlineKeyboardMarkup()
-        kb.add(
-            InlineKeyboardButton("M1",callback_data="tf_M1"),
-            InlineKeyboardButton("M5",callback_data="tf_M5"))
-        kb.add(
-            InlineKeyboardButton("M15",callback_data="tf_M15"))
-        kb.add(InlineKeyboardButton("⬅ Back",callback_data="back"))
-
-        bot.edit_message_text(
-            f"Pair Selected: {pair}\nSelect Timeframe",
-            call.message.chat.id,
-            call.message.message_id,
-            reply_markup=kb)
-
-# ================= TIMEFRAME =================
-
-    elif call.data.startswith("tf_"):
-
-        timeframe=call.data.split("_")[1]
-        pair=user_pair.get(call.message.chat.id)
-
-        if not pair:
-            bot.send_message(call.message.chat.id,"Select Pair First")
-            return
-
-        signal=generate_signal(pair,timeframe)
-
-        bot.send_message(call.message.chat.id,signal)
-
-# ================= ADMIN PANEL =================
-
-    elif call.data=="admin" and call.message.chat.id==ADMIN_ID:
-
-        kb=InlineKeyboardMarkup()
-        kb.add(InlineKeyboardButton("📩 Broadcast",callback_data="broadcast"))
-        kb.add(InlineKeyboardButton("👥 Pending Users",callback_data="pending"))
-        kb.add(InlineKeyboardButton("⬅ Back",callback_data="back"))
-
-        bot.edit_message_text(
-            "ADMIN PANEL",
-            call.message.chat.id,
-            call.message.message_id,
-            reply_markup=kb)
-
-# BROADCAST
-    elif call.data=="broadcast":
-        waiting_broadcast[call.message.chat.id]=True
-        bot.send_message(call.message.chat.id,"Send message/photo/link")
-
-# PENDING USERS
-    elif call.data=="pending":
-
-        for user,data in users.items():
-            if not data["approved"]:
-                kb=InlineKeyboardMarkup()
-                kb.add(
-                    InlineKeyboardButton("✅ Approve",callback_data=f"approve_{user}"),
-                    InlineKeyboardButton("❌ Reject",callback_data=f"reject_{user}")
-                )
-
-                bot.send_message(call.message.chat.id,f"User waiting: {user}",reply_markup=kb)
-
-# APPROVE
-    elif call.data.startswith("approve_"):
-
-        user=call.data.split("_")[1]
-        users[user]["approved"]=True
-        save_users(users)
-
-        bot.send_message(user,"✅ Payment Approved. Access Granted.")
-        bot.answer_callback_query(call.id,"Approved")
-
-# REJECT
-    elif call.data.startswith("reject_"):
-
-        user=call.data.split("_")[1]
-        bot.send_message(user,"❌ Payment Rejected")
-        bot.answer_callback_query(call.id,"Rejected")
-
-# ================= MESSAGE HANDLER =================
+# ================= TEXT HANDLER =================
 
 @bot.message_handler(content_types=["text","photo"])
 def messages(msg):
 
-    uid=msg.chat.id
+    uid=str(msg.chat.id)
+    text=msg.text if msg.content_type=="text" else ""
 
-# PAYMENT PROOF
-    if uid in waiting_payment:
+# BACK
+    if text=="⬅ Back":
+        main_menu(msg.chat.id)
+        return
 
-        bot.forward_message(ADMIN_ID,uid,msg.message_id)
-        bot.send_message(uid,"✅ Proof sent to admin")
+# ================= PAYMENT =================
 
-        waiting_payment.pop(uid)
+    if text=="💳 Payment":
+
+        kb=ReplyKeyboardMarkup(resize_keyboard=True)
+        kb.add("📋 Copy Address")
+        kb.add("📤 Upload Payment Proof")
+        kb.add("⬅ Back")
+
+        bot.send_message(
+            msg.chat.id,
+            f"Send USDT BEP20 Payment:\n\n{PAYMENT_ADDRESS}",
+            reply_markup=kb)
+        return
+
+    if text=="📋 Copy Address":
+        bot.send_message(msg.chat.id,PAYMENT_ADDRESS)
+        return
+
+    if text=="📤 Upload Payment Proof":
+        waiting_payment[msg.chat.id]=True
+        back_menu(msg.chat.id,"Send payment screenshot.")
+        return
+
+# ================= SIGNAL =================
+
+    if text=="📊 Get Signal":
+
+        if not users[uid]["approved"]:
+            bot.send_message(msg.chat.id,"🔒 Access Locked")
+            return
+
+        kb=ReplyKeyboardMarkup(resize_keyboard=True,row_width=2)
+
+        for p in PAIRS:
+            kb.add(p)
+
+        kb.add("⬅ Back")
+
+        bot.send_message(msg.chat.id,"Select Pair",reply_markup=kb)
+        return
+
+# ================= PAIR =================
+
+    if text in PAIRS:
+
+        user_pair[msg.chat.id]=text
+
+        kb=ReplyKeyboardMarkup(resize_keyboard=True)
+        kb.add("M1","M5","M15")
+        kb.add("⬅ Back")
+
+        bot.send_message(
+            msg.chat.id,
+            f"Pair Selected: {text}\nSelect Timeframe",
+            reply_markup=kb)
+        return
+
+# ================= TIMEFRAME =================
+
+    if text in ["M1","M5","M15"]:
+
+        pair=user_pair.get(msg.chat.id)
+
+        if not pair:
+            bot.send_message(msg.chat.id,"Select Pair First")
+            return
+
+        signal=generate_signal(pair,text)
+        bot.send_message(msg.chat.id,signal)
+        return
+
+# ================= ADMIN PANEL =================
+
+    if text=="⚙ ADMIN PANEL" and msg.chat.id==ADMIN_ID:
+
+        kb=ReplyKeyboardMarkup(resize_keyboard=True)
+        kb.add("📩 Broadcast")
+        kb.add("👥 Pending Users")
+        kb.add("⬅ Back")
+
+        bot.send_message(msg.chat.id,"ADMIN PANEL",reply_markup=kb)
         return
 
 # BROADCAST
-    if uid in waiting_broadcast:
+    if text=="📩 Broadcast" and msg.chat.id==ADMIN_ID:
+        waiting_broadcast[msg.chat.id]=True
+        back_menu(msg.chat.id,"Send message/photo/link")
+        return
+
+# PENDING USERS
+    if text=="👥 Pending Users" and msg.chat.id==ADMIN_ID:
+
+        for user,data in users.items():
+            if not data["approved"]:
+                bot.send_message(msg.chat.id,f"Pending User: {user}")
+        return
+
+# ================= PAYMENT PROOF =================
+
+    if msg.chat.id in waiting_payment:
+
+        bot.forward_message(ADMIN_ID,msg.chat.id,msg.message_id)
+        bot.send_message(msg.chat.id,"✅ Proof sent to admin")
+
+        waiting_payment.pop(msg.chat.id)
+        return
+
+# ================= BROADCAST SEND =================
+
+    if msg.chat.id in waiting_broadcast:
 
         sent=0
 
@@ -225,8 +202,8 @@ def messages(msg):
             except:
                 pass
 
-        bot.send_message(uid,f"✅ Broadcast sent to {sent} users")
-        waiting_broadcast.pop(uid)
+        bot.send_message(msg.chat.id,f"✅ Broadcast sent to {sent} users")
+        waiting_broadcast.pop(msg.chat.id)
         return
 
 bot.infinity_polling()
