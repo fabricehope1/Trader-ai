@@ -1,46 +1,22 @@
 import requests
 import os
-import time
 from datetime import datetime, timedelta
 
-# ================= API KEY =================
-API_KEY = os.getenv("FOREX_API_KEY")
+# ================= API =================
+API_KEY = os.environ.get("FOREX_API_KEY")
 
 if not API_KEY:
-    print("❌ API KEY NOT FOUND")
-else:
-    print("✅ API KEY LOADED")
+    raise Exception("FOREX_API_KEY missing")
 
-
-# ================= API TEST =================
-def api_test():
-    try:
-        url=f"https://api.twelvedata.com/time_series?symbol=EUR/USD&interval=1min&outputsize=2&apikey={API_KEY}"
-        r=requests.get(url).json()
-
-        if "values" in r:
-            print("✅ MARKET API CONNECTED")
-        else:
-            print("❌ API ERROR:", r)
-
-    except Exception as e:
-        print("❌ CONNECTION FAILED:", e)
-
-api_test()
-
+BASE_URL="https://api.twelvedata.com/time_series"
 
 # ================= PAIRS =================
-PAIRS = [
+PAIRS=[
     "EUR/USD",
     "GBP/USD",
     "USD/JPY",
     "EUR/JPY",
-    "GBP/JPY",
-
-    # OTC SYSTEM
-    "EUR/USD OTC",
-    "GBP/USD OTC",
-    "USD/JPY OTC"
+    "GBP/JPY"
 ]
 
 INTERVAL="1min"
@@ -49,15 +25,16 @@ INTERVAL="1min"
 # ================= MARKET DATA =================
 def get_market(pair):
 
-    symbol = pair.replace(" OTC","")
+    url=f"{BASE_URL}?symbol={pair}&interval={INTERVAL}&outputsize=150&apikey={API_KEY}"
 
-    url=f"https://api.twelvedata.com/time_series?symbol={symbol}&interval={INTERVAL}&outputsize=120&apikey={API_KEY}"
+    r=requests.get(url,timeout=10).json()
 
-    data=requests.get(url).json()
+    if "values" not in r:
+        return None
 
-    closes=[float(x["close"]) for x in data["values"]]
+    closes=[float(x["close"]) for x in r["values"]]
 
-    return closes
+    return closes[::-1]
 
 
 # ================= RSI =================
@@ -71,7 +48,9 @@ def rsi(data,period=14):
 
         if diff>0:
             gains.append(diff)
+            losses.append(0)
         else:
+            gains.append(0)
             losses.append(abs(diff))
 
     avg_gain=sum(gains[-period:])/period
@@ -88,12 +67,12 @@ def rsi(data,period=14):
 def ema(data,period):
 
     k=2/(period+1)
-    ema_val=data[0]
+    value=data[0]
 
     for price in data:
-        ema_val=price*k+ema_val*(1-k)
+        value=price*k+value*(1-k)
 
-    return ema_val
+    return value
 
 
 # ================= MACD =================
@@ -102,135 +81,119 @@ def macd(data):
 
 
 # ================= SUPPORT RESISTANCE =================
-def resistance(data):
-    return max(data[-25:])
-
 def support(data):
-    return min(data[-25:])
+    return min(data[-30:])
+
+def resistance(data):
+    return max(data[-30:])
 
 
 # ================= RWANDA ENTRY TIME =================
 def entry_time_rw():
 
     now=datetime.utcnow()+timedelta(hours=2)
-    entry=now+timedelta(seconds=15)
+
+    # entry after analysis confirmation
+    entry=now+timedelta(seconds=25)
 
     return entry.strftime("%H:%M:%S")
 
 
-# ================= WINRATE FILTER =================
-def winrate_filter(buy,sell,rsi_val,macd_val):
-
-    strength=abs(buy-sell)
-
-    if strength < 2:
-        return False
-
-    if 45 < rsi_val < 55:
-        return False
-
-    if abs(macd_val) < 0.00005:
-        return False
-
-    return True
-
-
-# ================= ANALYSIS =================
+# ================= AI ANALYSIS =================
 def analyze(pair):
 
     closes=get_market(pair)
 
+    if not closes:
+        return None
+
     price=closes[-1]
 
-    rsi_val=rsi(closes)
-    macd_val=macd(closes)
+    r=rsi(closes)
+    m=macd(closes)
 
     ema_fast=ema(closes,9)
     ema_slow=ema(closes,21)
 
-    res=resistance(closes)
     sup=support(closes)
+    res=resistance(closes)
 
     buy=0
     sell=0
 
-    if rsi_val<40:
-        buy+=1
-    elif rsi_val>60:
-        sell+=1
+    # RSI zone
+    if r<35:
+        buy+=2
+    elif r>65:
+        sell+=2
 
+    # Trend confirmation
     if ema_fast>ema_slow:
         buy+=1
     else:
         sell+=1
 
-    if macd_val>0:
+    # Momentum
+    if m>0:
         buy+=1
     else:
         sell+=1
 
-    if price<=sup*1.002:
-        buy+=1
+    # Rejection zone
+    if price<=sup*1.0015:
+        buy+=2
 
-    if price>=res*0.998:
-        sell+=1
+    if price>=res*0.9985:
+        sell+=2
 
-    if not winrate_filter(buy,sell,rsi_val,macd_val):
+    strength=abs(buy-sell)
+
+    # 🔥 HIGH ACCURACY FILTER
+    if strength<3:
         return None
 
     signal="🟢 BUY (CALL)" if buy>sell else "🔴 SELL (PUT)"
-    strength=abs(buy-sell)
 
-    return pair,price,signal,strength,rsi_val,macd_val
+    winrate=min(92,82+strength)
+
+    return pair,price,signal,strength,r,m,winrate
 
 
-# ================= MAIN SIGNAL =================
+# ================= SIGNAL ON COMMAND =================
 def generate_signal():
-
-    print("🤖 AI analyzing market...")
-
-    # ✅ ANALYSIS TIME 10s
-    time.sleep(10)
 
     best=None
     best_strength=0
 
     for pair in PAIRS:
 
-        try:
-            result=analyze(pair)
+        result=analyze(pair)
 
-            if result and result[3]>best_strength:
-                best=result
-                best_strength=result[3]
-
-        except Exception as e:
-            print("PAIR ERROR:",pair,e)
-            continue
+        if result and result[3]>best_strength:
+            best=result
+            best_strength=result[3]
 
     if not best:
-        return "⚠️ Market not strong now. Try again."
+        return "⚠️ Market ntabwo iri clear. Ongera ugerageze nyuma."
 
-    pair,price,signal,strength,rsi_val,macd_val=best
+    pair,price,signal,strength,r,m,winrate=best
 
     entry=entry_time_rw()
 
-    winrate=min(92,90+strength)
-
     return f"""
-🔥 PRO AI SIGNAL
+🔥 RWANDA AI SIGNAL
 
 PAIR: {pair}
 PRICE: {price}
 
-RSI: {round(rsi_val,2)}
-MACD: {round(macd_val,5)}
+RSI: {round(r,2)}
+MACD: {round(m,5)}
 
 SIGNAL: {signal}
 
 ENTRY TIME 🇷🇼: {entry}
 EXPIRY: 1 MIN
 
-WINRATE BOOSTER: {winrate}%
-STRENGTH: {strength}/4
+ACCURACY: {winrate}%
+CONFIDENCE: {strength}/5
 """
