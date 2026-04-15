@@ -1,6 +1,8 @@
 import os
 import requests
 import pandas as pd
+from datetime import datetime, timedelta
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, CallbackContext
 
@@ -22,54 +24,63 @@ def get_prices(pair):
         for t in data["rates"]:
             prices.append(data["rates"][t][pair[3:]])
 
-    if len(prices) < 30:
-        prices = [1 + i * 0.0001 for i in range(60)]
+    if len(prices) < 40:
+        prices = [1 + i*0.0001 for i in range(60)]
 
     return prices
 
 
 # ===============================
-# RSI
+# AI ANALYSIS
 # ===============================
-def calculate_rsi(prices, period=14):
+def ai_signal(pair):
+
+    prices = get_prices(pair)
 
     series = pd.Series(prices)
-    delta = series.diff()
 
+    # RSI
+    delta = series.diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
 
-    avg_gain = gain.rolling(period).mean()
-    avg_loss = loss.rolling(period).mean()
+    avg_gain = gain.rolling(14).mean()
+    avg_loss = loss.rolling(14).mean()
 
     rs = avg_gain / avg_loss
     rsi = 100 - (100 / (1 + rs))
+    rsi_value = rsi.iloc[-1]
 
-    return rsi.iloc[-1]
+    # TREND FILTER
+    ma_fast = series.rolling(5).mean().iloc[-1]
+    ma_slow = series.rolling(20).mean().iloc[-1]
 
-
-# ===============================
-# SIGNAL
-# ===============================
-def get_signal(pair):
-
-    prices = get_prices(pair)
-    rsi = calculate_rsi(prices)
-
-    if rsi < 30:
-        signal = "BUY 📈"
-    elif rsi > 70:
-        signal = "SELL 📉"
+    # AI DECISION
+    if rsi_value < 35 and ma_fast > ma_slow:
+        signal = "UP 📈"
+    elif rsi_value > 65 and ma_fast < ma_slow:
+        signal = "DOWN 📉"
     else:
         signal = "WAIT ⏳"
 
-    return signal, rsi
+    return signal, rsi_value
 
 
 # ===============================
-# START
+# TIME
 # ===============================
-def start(update: Update, context: CallbackContext):
+def entry_time():
+
+    now = datetime.now()
+    entry = now + timedelta(minutes=1)
+
+    return now.strftime("%H:%M"), entry.strftime("%H:%M")
+
+
+# ===============================
+# MENUS
+# ===============================
+def pair_menu():
 
     keyboard = [
         [InlineKeyboardButton("EURUSD", callback_data="pair_EURUSD")],
@@ -77,9 +88,34 @@ def start(update: Update, context: CallbackContext):
         [InlineKeyboardButton("EURGBP", callback_data="pair_EURGBP")],
     ]
 
+    return InlineKeyboardMarkup(keyboard)
+
+
+def timeframe_menu():
+    keyboard = [
+        [InlineKeyboardButton("1 MIN", callback_data="time_1")],
+        [InlineKeyboardButton("5 MIN", callback_data="time_5")],
+        [InlineKeyboardButton("⬅️ BACK", callback_data="back_pair")],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def signal_menu():
+    keyboard = [
+        [InlineKeyboardButton("GET AI SIGNAL 🔥", callback_data="signal")],
+        [InlineKeyboardButton("⬅️ BACK", callback_data="back_time")],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+# ===============================
+# START
+# ===============================
+def start(update: Update, context: CallbackContext):
+
     update.message.reply_text(
-        "🔥 SELECT PAIR",
-        reply_markup=InlineKeyboardMarkup(keyboard),
+        "🔥 QUOTEX AI BOT\n\nSelect Pair",
+        reply_markup=pair_menu(),
     )
 
 
@@ -94,44 +130,44 @@ def button(update: Update, context: CallbackContext):
     user_id = query.from_user.id
     data = query.data
 
-    # SELECT PAIR
+    # BACK BUTTONS
+    if data == "back_pair":
+        query.edit_message_text(
+            "Select Pair",
+            reply_markup=pair_menu(),
+        )
+        return
+
+    if data == "back_time":
+        query.edit_message_text(
+            "Select Timeframe",
+            reply_markup=timeframe_menu(),
+        )
+        return
+
+    # PAIR
     if data.startswith("pair_"):
 
         pair = data.split("_")[1]
         user_settings[user_id] = {"pair": pair}
 
-        keyboard = [
-            [InlineKeyboardButton("1 Minute", callback_data="time_1")],
-            [InlineKeyboardButton("5 Minutes", callback_data="time_5")],
-            [InlineKeyboardButton("15 Minutes", callback_data="time_15")],
-        ]
-
         query.edit_message_text(
-            f"✅ Pair: {pair}\n\nSelect Timeframe",
-            reply_markup=InlineKeyboardMarkup(keyboard),
+            f"✅ Pair Selected: {pair}",
+            reply_markup=timeframe_menu(),
         )
 
-    # SELECT TIMEFRAME
+    # TIMEFRAME
     elif data.startswith("time_"):
 
         timeframe = data.split("_")[1]
-
-        if user_id not in user_settings:
-            query.edit_message_text("Select pair first")
-            return
-
         user_settings[user_id]["time"] = timeframe
 
-        keyboard = [
-            [InlineKeyboardButton("GET SIGNAL 🔥", callback_data="signal")]
-        ]
-
         query.edit_message_text(
-            f"⏱ Timeframe Selected: {timeframe} MIN\n\nClick GET SIGNAL",
-            reply_markup=InlineKeyboardMarkup(keyboard),
+            f"⏱ Timeframe: {timeframe} MIN",
+            reply_markup=signal_menu(),
         )
 
-    # GET SIGNAL
+    # SIGNAL
     elif data == "signal":
 
         settings = user_settings[user_id]
@@ -139,7 +175,9 @@ def button(update: Update, context: CallbackContext):
         pair = settings["pair"]
         timeframe = settings["time"]
 
-        signal, rsi = get_signal(pair)
+        signal, rsi = ai_signal(pair)
+
+        current_time, entry = entry_time()
 
         query.edit_message_text(
             f"""
@@ -148,34 +186,13 @@ def button(update: Update, context: CallbackContext):
 PAIR: {pair}
 TIMEFRAME: {timeframe} MIN
 
-RSI: {round(rsi,2)}
+CURRENT TIME: {current_time}
+ENTRY TIME: {entry}
+
+AI RSI: {round(rsi,2)}
 SIGNAL: {signal}
-"""
-        )
-
-
-# ===============================
-# AUTO SIGNAL
-# ===============================
-def auto_signal(context: CallbackContext):
-
-    for user_id, settings in user_settings.items():
-
-        pair = settings["pair"]
-        timeframe = settings["time"]
-
-        signal, rsi = get_signal(pair)
-
-        context.bot.send_message(
-            chat_id=user_id,
-            text=f"""
-⚡ AUTO SIGNAL
-
-PAIR: {pair}
-TIMEFRAME: {timeframe} MIN
-RSI: {round(rsi,2)}
-SIGNAL: {signal}
-"""
+""",
+            reply_markup=signal_menu(),
         )
 
 
@@ -190,8 +207,6 @@ def main():
 
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CallbackQueryHandler(button))
-
-    updater.job_queue.run_repeating(auto_signal, interval=60, first=10)
 
     updater.start_polling()
     updater.idle()
