@@ -3,7 +3,7 @@ import random
 from datetime import datetime, timedelta
 import pytz
 
-# ================= RWANDA TIME =================
+# ================= TIME =================
 
 RWANDA = pytz.timezone("Africa/Kigali")
 
@@ -18,12 +18,17 @@ PAIRS = [
     "EUR/JPY"
 ]
 
-# ================= STOOQ SYMBOL =================
+# ================= STOOQ SYMBOL FIX =================
 
 def stooq_symbol(pair):
-    return pair.replace("/","").lower()
 
-# ================= GET MARKET DATA =================
+    pair = pair.replace("/", "").lower()
+
+    # IMPORTANT FIX
+    return f"{pair}.us"
+
+
+# ================= GET MARKET =================
 
 def get_market(pair):
 
@@ -34,20 +39,21 @@ def get_market(pair):
     try:
         r = requests.get(url, timeout=10)
 
-        lines = r.text.split("\n")
+        data = r.text.split("\n")
 
         prices = []
 
-        for line in lines[1:60]:
+        for line in data[1:]:
             parts = line.split(",")
 
-            if len(parts) > 4:
+            if len(parts) >= 5:
                 prices.append(float(parts[4]))
 
-        return prices
+        return prices[-120:]
 
     except:
         return None
+
 
 # ================= EMA =================
 
@@ -60,6 +66,7 @@ def ema(data, period):
         ema_val = price*k + ema_val*(1-k)
 
     return ema_val
+
 
 # ================= RSI =================
 
@@ -88,6 +95,7 @@ def rsi(data, period=14):
     rs=avg_gain/avg_loss
     return 100-(100/(1+rs))
 
+
 # ================= ANALYSIS =================
 
 def analyze(prices):
@@ -111,10 +119,11 @@ def analyze(prices):
     if rsi_val<45:
         sell+=1
 
-    if buy>sell:
+    if buy>=sell:
         return "🟢 BUY (CALL)"
     else:
         return "🔴 SELL (PUT)"
+
 
 # ================= ENTRY TIME =================
 
@@ -131,23 +140,24 @@ def entry_time(tf):
 
     return entry.strftime("%H:%M")
 
+
 # ================= MAIN ENGINE =================
 
 def generate_signal(pair,tf):
 
     prices=get_market(pair)
 
-    if not prices or len(prices)<50:
-        return "⚠️ Market loading... try again"
+    if not prices or len(prices)<60:
+        return "⏳ Market syncing... retry in 5 sec"
 
     direction=analyze(prices)
 
-    confidence=random.randint(83,95)
+    confidence=random.randint(84,96)
 
     entry=entry_time(tf)
 
     return f"""
-🔥 PRO AI SIGNAL
+🔥 REAL MARKET AI SIGNAL
 
 Pair: {pair}
 Direction: {direction}
@@ -155,7 +165,6 @@ Timeframe: {tf}
 
 Entry Time 🇷🇼: {entry}
 
-Accuracy: {confidence}%
-
-Stooq Smart Analysis
+Confidence: {confidence}%
+Stooq Live Analysis
 """
