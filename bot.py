@@ -1,7 +1,7 @@
 import telebot
 import json
 import os
-from telebot.types import ReplyKeyboardMarkup,KeyboardButton
+from telebot.types import ReplyKeyboardMarkup
 from pro_engine import generate_signal,PAIRS
 
 TOKEN=os.getenv("BOT_TOKEN")
@@ -14,6 +14,7 @@ PAYMENT_ADDRESS="0xA7123932DF237A24ad8c251502C169d744dd6D41"
 waiting_broadcast={}
 waiting_payment={}
 user_pair={}
+pending_list={}
 
 # ================= DATABASE =================
 
@@ -57,15 +58,13 @@ def start(msg):
     if uid not in users:
         users[uid]={"approved":False}
 
-    # ADMIN AUTO ACCESS
     if msg.chat.id==ADMIN_ID:
         users[uid]["approved"]=True
 
     save_users(users)
-
     main_menu(msg.chat.id)
 
-# ================= TEXT HANDLER =================
+# ================= MESSAGE HANDLER =================
 
 @bot.message_handler(content_types=["text","photo"])
 def messages(msg):
@@ -110,7 +109,7 @@ def messages(msg):
             bot.send_message(msg.chat.id,"🔒 Access Locked")
             return
 
-        kb=ReplyKeyboardMarkup(resize_keyboard=True,row_width=2)
+        kb=ReplyKeyboardMarkup(resize_keyboard=True)
 
         for p in PAIRS:
             kb.add(p)
@@ -162,37 +161,59 @@ def messages(msg):
         bot.send_message(msg.chat.id,"ADMIN PANEL",reply_markup=kb)
         return
 
-# BROADCAST
-    if text=="📩 Broadcast" and msg.chat.id==ADMIN_ID:
-        waiting_broadcast[msg.chat.id]=True
-        back_menu(msg.chat.id,"Send message/photo/link")
+# ================= PENDING USERS =================
+
+    if text=="👥 Pending Users" and msg.chat.id==ADMIN_ID:
+
+        pending=[]
+
+        for user,data in users.items():
+            if not data["approved"]:
+                pending.append(user)
+
+        if not pending:
+            bot.send_message(msg.chat.id,"No pending users")
+            return
+
+        pending_list[msg.chat.id]=pending
+
+        kb=ReplyKeyboardMarkup(resize_keyboard=True)
+
+        for u in pending:
+            kb.add(f"✅ Approve {u}")
+            kb.add(f"❌ Reject {u}")
+
+        kb.add("⬅ Back")
+
+        bot.send_message(msg.chat.id,"Pending Users:",reply_markup=kb)
         return
 
-# PENDING USERS
-if text=="👥 Pending Users" and msg.chat.id==ADMIN_ID:
+# ================= APPROVE =================
 
-    pending=[]
+    if text.startswith("✅ Approve") and msg.chat.id==ADMIN_ID:
 
-    for user,data in users.items():
-        if not data["approved"]:
-            pending.append(user)
+        user=text.split(" ")[2]
 
-    if not pending:
-        bot.send_message(msg.chat.id,"No pending users")
+        if user in users:
+            users[user]["approved"]=True
+            save_users(users)
+
+            bot.send_message(user,"✅ Payment Approved. Access Granted.")
+            bot.send_message(msg.chat.id,f"Approved {user}")
+
         return
 
-    pending_list[msg.chat.id]=pending
+# ================= REJECT =================
 
-    kb=ReplyKeyboardMarkup(resize_keyboard=True)
+    if text.startswith("❌ Reject") and msg.chat.id==ADMIN_ID:
 
-    for u in pending:
-        kb.add(f"✅ Approve {u}")
-        kb.add(f"❌ Reject {u}")
+        user=text.split(" ")[2]
 
-    kb.add("⬅ Back")
+        if user in users:
+            bot.send_message(user,"❌ Payment Rejected")
+            bot.send_message(msg.chat.id,f"Rejected {user}")
 
-    bot.send_message(msg.chat.id,"Pending Users:",reply_markup=kb)
-    return
+        return
 
 # ================= PAYMENT PROOF =================
 
@@ -204,7 +225,7 @@ if text=="👥 Pending Users" and msg.chat.id==ADMIN_ID:
         waiting_payment.pop(msg.chat.id)
         return
 
-# ================= BROADCAST SEND =================
+# ================= BROADCAST =================
 
     if msg.chat.id in waiting_broadcast:
 
@@ -225,29 +246,3 @@ if text=="👥 Pending Users" and msg.chat.id==ADMIN_ID:
         return
 
 bot.infinity_polling()
-# ================= APPROVE =================
-
-if text.startswith("✅ Approve") and msg.chat.id==ADMIN_ID:
-
-    user=text.split(" ")[2]
-
-    if user in users:
-        users[user]["approved"]=True
-        save_users(users)
-
-        bot.send_message(user,"✅ Payment Approved. Access Granted.")
-        bot.send_message(msg.chat.id,f"Approved {user}")
-
-    return
-
-# ================= REJECT =================
-
-if text.startswith("❌ Reject") and msg.chat.id==ADMIN_ID:
-
-    user=text.split(" ")[2]
-
-    if user in users:
-        bot.send_message(user,"❌ Payment Rejected")
-        bot.send_message(msg.chat.id,f"Rejected {user}")
-
-    return
