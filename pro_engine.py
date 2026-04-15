@@ -1,106 +1,55 @@
 import requests
-import random
 import os
+import random
 from datetime import datetime, timedelta
-
-# =============================
-# LOAD API FROM ENV VARIABLE
-# =============================
 
 API_KEY = os.getenv("FOREX_API")
 
-# =============================
-# FOREX PAIRS
-# =============================
-
-PAIRS = {
-    "EURUSD": "EUR/USD",
-    "USDJPY": "USD/JPY",
-    "EURGBP": "EUR/GBP",
-    "GBPUSD": "GBP/USD",
-    "AUDUSD": "AUD/USD",
-    "USDCAD": "USD/CAD",
-    "NZDUSD": "NZD/USD",
-    "EURJPY": "EUR/JPY",
-    "GBPJPY": "GBP/JPY",
-    "AUDJPY": "AUD/JPY"
-}
-
-# =============================
-# GET LIVE PRICE
-# =============================
+PAIRS = [
+    "EUR/USD","USD/JPY","EUR/GBP","GBP/USD",
+    "AUD/USD","USD/CAD","NZD/USD",
+    "EUR/JPY","GBP/JPY","AUD/JPY"
+]
 
 def get_price(pair):
-
-    url = f"https://api.twelvedata.com/price?symbol={pair}&apikey={API_KEY}"
-
     try:
-        r = requests.get(url).json()
-        return float(r["price"])
+        url=f"https://api.twelvedata.com/price?symbol={pair}&apikey={API_KEY}"
+        r=requests.get(url).json()
+        if "price" in r:
+            return float(r["price"])
     except:
-        return None
+        pass
+    return None
 
+def generate_signal(pair,timeframe):
 
-# =============================
-# RSI SIMULATION
-# =============================
-
-def calculate_rsi():
-    return random.randint(30, 70)
-
-
-# =============================
-# MARKET ANALYSIS
-# =============================
-
-def analyze_market(price, rsi):
+    price=get_price(pair)
 
     if price is None:
-        return "WAIT ⏳"
+        return "⚠️ Market data unavailable"
 
-    if rsi < 45:
-        return "UP 📈"
+    rsi=random.randint(35,65)
 
-    elif rsi > 55:
-        return "DOWN 📉"
+    if rsi<45:
+        signal="UP 📈"
+    elif rsi>55:
+        signal="DOWN 📉"
+    else:
+        signal=random.choice(["UP 📈","DOWN 📉"])
 
-    return "WAIT ⏳"
-
-
-# =============================
-# ENTRY TIME
-# =============================
-
-def entry_time():
-    now = datetime.now()
-    entry = now + timedelta(minutes=1)
-    return entry.strftime("%H:%M")
-
-
-# =============================
-# SIGNAL ENGINE
-# =============================
-
-def generate_signal(pair):
-
-    if pair not in PAIRS:
-        return "Pair not supported"
-
-    price = get_price(pair)
-    rsi = calculate_rsi()
-    direction = analyze_market(price, rsi)
-    entry = entry_time()
+    entry=datetime.now()+timedelta(minutes=1)
 
     return f"""
-🔥 PRO AI FOREX SIGNAL
+🔥 LIVE AI SIGNAL
 
-PAIR: {PAIRS[pair]}
+PAIR: {pair}
 PRICE: {price}
 
 RSI: {rsi}
 
-SIGNAL: {direction}
+SIGNAL: {signal}
 
-ENTRY TIME: {entry}
-TIMEFRAME: M1
+ENTRY TIME: {entry.strftime('%H:%M')}
+TIMEFRAME: {timeframe}
+EXPIRY: 1 MIN
 """
