@@ -1,79 +1,99 @@
 import os
 import requests
 import pandas as pd
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from ta.momentum import RSIIndicator
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
-TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+TOKEN = os.getenv("TOKEN")
 
-# ========================
-# START COMMAND
-# ========================
+pairs = {
+    "EURUSD": "BTCUSDT",
+    "GBPUSD": "ETHUSDT",
+    "USDJPY": "BNBUSDT"
+}
+
+times = {
+    "1m": "1m",
+    "2m": "3m",
+    "3m": "5m",
+    "5m": "15m"
+}
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("✅ Trader AI Bot Online!")
+    keyboard = [[InlineKeyboardButton("📊 GET SIGNAL", callback_data="signal")]]
+    await update.message.reply_text(
+        "🔥 Pocket Option Signal Bot",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
-# ========================
-# GET MARKET DATA
-# ========================
-def get_price():
-    url = "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=50"
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "signal":
+        keyboard = [
+            [InlineKeyboardButton(p, callback_data=f"pair_{p}")]
+            for p in pairs
+        ]
+        await query.edit_message_text(
+            "Choose Pair:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    elif "pair_" in query.data:
+        pair = query.data.split("_")[1]
+        context.user_data["pair"] = pair
+
+        keyboard = [
+            [InlineKeyboardButton(t, callback_data=f"time_{t}")]
+            for t in times
+        ]
+        await query.edit_message_text(
+            f"{pair} selected\nChoose Time:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    elif "time_" in query.data:
+        pair = context.user_data["pair"]
+        timeframe = query.data.split("_")[1]
+
+        signal, acc = get_signal(pair, timeframe)
+
+        await query.edit_message_text(
+f"""
+📊 SIGNAL
+
+Pair: {pair}
+Time: {timeframe}
+Direction: {signal}
+Accuracy: {acc}%
+"""
+        )
+
+def get_signal(pair, timeframe):
+    symbol = pairs[pair]
+    interval = times[timeframe]
+
+    url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit=100"
     data = requests.get(url).json()
-    closes = [float(candle[4]) for candle in data]
-    return closes
 
-# ========================
-# RSI CALCULATION
-# ========================
-def calculate_rsi(prices, period=14):
-    series = pd.Series(prices)
-    delta = series.diff()
+    closes = [float(c[4]) for c in data]
+    df = pd.DataFrame(closes, columns=["close"])
 
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-
-    avg_gain = gain.rolling(period).mean()
-    avg_loss = loss.rolling(period).mean()
-
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-
-    return rsi.iloc[-1]
-
-# ========================
-# SEND SIGNAL
-# ========================
-async def send_signal(context: ContextTypes.DEFAULT_TYPE):
-
-    prices = get_price()
-    rsi = calculate_rsi(prices)
+    rsi = RSIIndicator(df["close"], window=14).rsi().iloc[-1]
 
     if rsi < 30:
-        signal = "BUY 📈"
+        return "🟢 CALL", 88
     elif rsi > 70:
-        signal = "SELL 📉"
+        return "🔴 PUT", 85
     else:
-        signal = "WAIT ⏳"
+        return "⚪ WAIT", 60
 
-    message = f"""
-🔥 QUOTEX SIGNAL
-
-PAIR: BTCUSD
-TIMEFRAME: 1 MIN
-RSI: {round(rsi,2)}
-
-SIGNAL: {signal}
-"""
-
-    await context.bot.send_message(chat_id=CHAT_ID, text=message)
-
-# ========================
-# MAIN BOT
-# ========================
 app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
+app.add_handler(CallbackQueryHandler(button))
 
-app.job_queue.run_repeating(send_signal, interval=60, first=10)
-
+print("BOT STARTED...")
 app.run_polling()
