@@ -1,13 +1,21 @@
+
+import os
 import requests
 import time
-from telegram import Bot
 import pandas as pd
+from telegram import Bot
 
-TOKEN = "8236042238:AAEAqBYZKNodL6_Z5zopRRJQ3BWZqRRyOno"
-CHAT_ID = "8448217655"
+# ===============================
+# GET SECRET VARIABLES
+# ===============================
+TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
 
 bot = Bot(token=TOKEN)
 
+# ===============================
+# GET REAL MARKET DATA
+# ===============================
 def get_price():
     url = "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=50"
     data = requests.get(url).json()
@@ -15,7 +23,10 @@ def get_price():
     closes = [float(candle[4]) for candle in data]
     return closes
 
-def rsi(prices, period=14):
+# ===============================
+# RSI CALCULATION
+# ===============================
+def calculate_rsi(prices, period=14):
     series = pd.Series(prices)
     delta = series.diff()
 
@@ -30,27 +41,41 @@ def rsi(prices, period=14):
 
     return rsi.iloc[-1]
 
-while True:
+# ===============================
+# SIGNAL LOGIC
+# ===============================
+def get_signal():
     prices = get_price()
-    rsi_value = rsi(prices)
+    rsi = calculate_rsi(prices)
 
-    if rsi_value < 30:
-        signal = "BUY 📈"
-    elif rsi_value > 70:
-        signal = "SELL 📉"
+    if rsi < 30:
+        return "BUY 📈", rsi
+    elif rsi > 70:
+        return "SELL 📉", rsi
     else:
-        signal = "WAIT ⏳"
+        return "WAIT ⏳", rsi
 
-    message = f"""
-QUOTEX SIGNAL 🔥
+# ===============================
+# MAIN LOOP
+# ===============================
+while True:
+    try:
+        signal, rsi_value = get_signal()
+
+        message = f"""
+🔥 QUOTEX SIGNAL
 
 PAIR: BTCUSD
 TIMEFRAME: 1 MIN
-RSI: {round(rsi_value,2)}
 
+RSI: {round(rsi_value,2)}
 SIGNAL: {signal}
 """
 
-    bot.send_message(chat_id=CHAT_ID, text=message)
+        bot.send_message(chat_id=CHAT_ID, text=message)
 
-    time.sleep(60)
+        time.sleep(60)
+
+    except Exception as e:
+        print("Error:", e)
+        time.sleep(10)
