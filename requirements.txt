@@ -2,3 +2,5 @@ pyTelegramBotAPI
 requests
 pandas
 numpy
+ta
+pytz
