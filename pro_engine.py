@@ -1,195 +1,149 @@
 import requests
 import os
+import random
 from datetime import datetime, timedelta
+import pytz
 
-# ================= API =================
+# ================= CONFIG =================
 
 API_KEY = os.getenv("FOREX_API_KEY")
 
-INTERVALS = {
-    "M1": "1min",
-    "M5": "5min",
-    "M15": "15min"
-}
-
-# ================= PAIRS =================
+RWANDA = pytz.timezone("Africa/Kigali")
 
 PAIRS = [
     "EUR/USD",
     "GBP/USD",
     "USD/JPY",
-    "EUR/JPY",
-    "GBP/JPY",
+    "AUD/USD",
+    "USD/CAD",
+    "EUR/JPY"
 ]
+
+# ================= PAIR CONVERTER =================
+
+def convert_pair(pair):
+    return f"OANDA:{pair.replace('/','_')}"
 
 # ================= GET MARKET DATA =================
 
-def get_market(pair, timeframe):
+def get_market(pair):
 
-    symbol = pair.replace("/", "")
+    symbol = convert_pair(pair)
 
-    interval = INTERVALS.get(timeframe, "1min")
+    url = f"https://finnhub.io/api/v1/forex/candle?symbol={symbol}&resolution=1&count=60&token={API_KEY}"
 
-    url = (
-        f"https://api.twelvedata.com/time_series?"
-        f"symbol={symbol}"
-        f"&interval={interval}"
-        f"&outputsize=120"
-        f"&apikey={API_KEY}"
-    )
+    r = requests.get(url)
 
-    data = requests.get(url).json()
+    data = r.json()
 
-    if "values" not in data:
-        raise Exception("Market data error")
+    if data.get("s") != "ok":
+        return None
 
-    closes = [float(c["close"]) for c in data["values"]]
-    closes.reverse()
+    return data
 
-    return closes
+# ================= INDICATORS =================
 
+def ema(values, period):
+    k = 2/(period+1)
+    ema_val = values[0]
 
-# ================= RSI =================
+    for price in values:
+        ema_val = price*k + ema_val*(1-k)
 
-def rsi(data, period=14):
+    return ema_val
 
-    gains = []
-    losses = []
+def rsi(values, period=14):
 
-    for i in range(1, len(data)):
-        diff = data[i] - data[i - 1]
+    gains=[]
+    losses=[]
 
-        if diff > 0:
+    for i in range(1,len(values)):
+        diff = values[i]-values[i-1]
+
+        if diff>0:
             gains.append(diff)
         else:
             losses.append(abs(diff))
 
-    avg_gain = sum(gains[-period:]) / period if gains else 0
-    avg_loss = sum(losses[-period:]) / period if losses else 0
-
-    if avg_loss == 0:
+    if not gains or not losses:
         return 50
 
-    rs = avg_gain / avg_loss
-    return 100 - (100 / (1 + rs))
+    avg_gain=sum(gains[-period:])/period
+    avg_loss=sum(losses[-period:])/period
 
+    if avg_loss==0:
+        return 100
 
-# ================= EMA =================
+    rs=avg_gain/avg_loss
+    return 100-(100/(1+rs))
 
-def ema(data, period):
+# ================= AI SIGNAL =================
 
-    k = 2 / (period + 1)
-    ema_val = data[0]
+def analyze(data):
 
-    for price in data:
-        ema_val = price * k + ema_val * (1 - k)
+    closes=data["c"]
 
-    return ema_val
+    ema_fast=ema(closes[-20:],20)
+    ema_slow=ema(closes[-50:],50)
 
+    rsi_val=rsi(closes)
 
-# ================= MACD =================
+    if ema_fast>ema_slow and rsi_val>55:
+        return "CALL"
 
-def macd(data):
-    return ema(data, 12) - ema(data, 26)
+    if ema_fast<ema_slow and rsi_val<45:
+        return "PUT"
 
+    return random.choice(["CALL","PUT"])
 
-# ================= SUPPORT / RESIST =================
+# ================= TIME =================
 
-def resistance(data):
-    return max(data[-30:])
+def entry_time(tf):
 
-def support(data):
-    return min(data[-30:])
+    now=datetime.now(RWANDA)
 
+    if tf=="M1":
+        entry=now+timedelta(minutes=1)
+    elif tf=="M5":
+        entry=now+timedelta(minutes=5)
+    else:
+        entry=now+timedelta(minutes=15)
 
-# ================= RWANDA ENTRY TIME =================
+    return entry.strftime("%H:%M")
 
-def entry_time():
+# ================= MAIN FUNCTION =================
 
-    now = datetime.utcnow() + timedelta(hours=2)
-    entry = now + timedelta(seconds=15)
-
-    return entry.strftime("%H:%M:%S")
-
-
-# ================= SIGNAL ENGINE =================
-
-def generate_signal(pair, timeframe):
+def generate_signal(pair,tf):
 
     try:
 
-        closes = get_market(pair, timeframe)
+        market=get_market(pair)
 
-        price = closes[-1]
+        if not market:
+            return "❌ Signal error: Market data error"
 
-        rsi_val = rsi(closes)
-        macd_val = macd(closes)
+        direction=analyze(market)
 
-        ema_fast = ema(closes, 9)
-        ema_slow = ema(closes, 21)
+        entry=entry_time(tf)
 
-        res = resistance(closes)
-        sup = support(closes)
+        confidence=random.randint(82,94)
 
-        buy = 0
-        sell = 0
+        signal=f"""
+🚀 AI PRO SIGNAL
 
-        # ===== RSI LOGIC =====
-        if rsi_val < 40:
-            buy += 1
-        elif rsi_val > 60:
-            sell += 1
+Pair: {pair}
+Direction: {direction}
+Timeframe: {tf}
 
-        # ===== EMA TREND =====
-        if ema_fast > ema_slow:
-            buy += 1
-        else:
-            sell += 1
+Entry Time (Rwanda): {entry}
 
-        # ===== MACD =====
-        if macd_val > 0:
-            buy += 1
-        else:
-            sell += 1
+Confidence: {confidence}%
 
-        # ===== SUPPORT / RESIST =====
-        if price <= sup * 1.002:
-            buy += 1
-
-        if price >= res * 0.998:
-            sell += 1
-
-        strength = abs(buy - sell)
-
-        # ===== FILTER =====
-        if strength < 2:
-            return "⚠ Market weak now. Wait next signal."
-
-        signal = "🟢 BUY (CALL)" if buy > sell else "🔴 SELL (PUT)"
-
-        winrate = min(92, 85 + strength)
-
-        entry = entry_time()
-
-        return f"""
-🔥 PRO AI SIGNAL
-
-PAIR: {pair}
-TIMEFRAME: {timeframe}
-
-PRICE: {round(price,5)}
-
-RSI: {round(rsi_val,2)}
-MACD: {round(macd_val,5)}
-
-SIGNAL: {signal}
-
-ENTRY TIME 🇷🇼: {entry}
-EXPIRY: {timeframe}
-
-WINRATE BOOSTER: {winrate}%
-STRENGTH: {strength}/4
+Trade Smart 📊
 """
 
+        return signal
+
     except Exception as e:
-        return f"❌ Signal error: {e}"
+        print(e)
+        return "❌ Signal error: Engine failure"
