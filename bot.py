@@ -100,7 +100,30 @@ def messages(msg):
         waiting_payment[msg.chat.id]=True
         back_menu(msg.chat.id,"Send payment screenshot.")
         return
+        
+# ================= SEND BROADCAST =================
 
+if msg.chat.id in waiting_broadcast:
+
+    sent=0
+
+    for user in users:
+        try:
+            if msg.content_type=="text":
+                bot.send_message(user,msg.text)
+            else:
+                bot.send_photo(user,msg.photo[-1].file_id,caption=msg.caption)
+
+            sent+=1
+        except:
+            pass
+
+    bot.send_message(msg.chat.id,f"✅ Broadcast sent to {sent} users")
+
+    waiting_broadcast.pop(msg.chat.id)
+    main_menu(msg.chat.id)
+    return
+    
 # ================= SIGNAL =================
 
     if text=="📊 Get Signal":
@@ -160,7 +183,14 @@ def messages(msg):
 
         bot.send_message(msg.chat.id,"ADMIN PANEL",reply_markup=kb)
         return
+        
+# ================= BROADCAST START =================
 
+if text=="📩 Broadcast" and msg.chat.id==ADMIN_ID:
+
+    waiting_broadcast[msg.chat.id]=True
+    back_menu(msg.chat.id,"Send message/photo/link to broadcast")
+    return
 # ================= PENDING USERS =================
 
     if text=="👥 Pending Users" and msg.chat.id==ADMIN_ID:
