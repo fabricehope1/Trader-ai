@@ -140,23 +140,18 @@ def messages(msg):
 
 if text in ["M1", "M5", "M15"]:
 
-    # Reba niba user yahisemo pair mbere
     pair = user_pair.get(msg.chat.id)
 
     if not pair:
-        bot.send_message(
-            msg.chat.id,
-            "⚠️ Please select pair first"
-        )
+        bot.send_message(msg.chat.id, "⚠️ Select pair first")
         return
 
     timeframe = text
 
-    # Hamagara AI ENGINE
     result = generate_signal(pair, timeframe)
 
-    # ===== SUCCESS SIGNAL =====
-    if result["status"] == "success":
+    # SUCCESS
+    if result.get("status") == "success":
 
         message = f"""
 📊 AI SIGNAL
@@ -164,32 +159,20 @@ if text in ["M1", "M5", "M15"]:
 Pair: {result['pair']}
 Signal: {result['signal']}
 Timeframe: {result['timeframe']}
-Entry Time (RW): {result['entry_time']}
+Entry Time: {result['entry_time']}
 Accuracy: {result['accuracy']}
 """
 
         bot.send_message(msg.chat.id, message)
-        return
 
+    # WAIT
+    elif result.get("status") == "wait":
 
-    # ===== MARKET LOADING =====
-    elif result["status"] == "wait":
+        bot.send_message(msg.chat.id, result["message"])
 
-        bot.send_message(
-            msg.chat.id,
-            result["message"]
-        )
-        return
-
-
-    # ===== ERROR =====
+    # ERROR
     else:
-
-        bot.send_message(
-            msg.chat.id,
-            "⚠️ Signal generation error"
-        )
-        return
+        bot.send_message(msg.chat.id, "⚠️ Signal error")
 
 # ================= ADMIN PANEL =================
 
