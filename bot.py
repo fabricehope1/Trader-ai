@@ -169,12 +169,30 @@ def messages(msg):
         return
 
 # PENDING USERS
-    if text=="👥 Pending Users" and msg.chat.id==ADMIN_ID:
+if text=="👥 Pending Users" and msg.chat.id==ADMIN_ID:
 
-        for user,data in users.items():
-            if not data["approved"]:
-                bot.send_message(msg.chat.id,f"Pending User: {user}")
+    pending=[]
+
+    for user,data in users.items():
+        if not data["approved"]:
+            pending.append(user)
+
+    if not pending:
+        bot.send_message(msg.chat.id,"No pending users")
         return
+
+    pending_list[msg.chat.id]=pending
+
+    kb=ReplyKeyboardMarkup(resize_keyboard=True)
+
+    for u in pending:
+        kb.add(f"✅ Approve {u}")
+        kb.add(f"❌ Reject {u}")
+
+    kb.add("⬅ Back")
+
+    bot.send_message(msg.chat.id,"Pending Users:",reply_markup=kb)
+    return
 
 # ================= PAYMENT PROOF =================
 
@@ -207,3 +225,29 @@ def messages(msg):
         return
 
 bot.infinity_polling()
+# ================= APPROVE =================
+
+if text.startswith("✅ Approve") and msg.chat.id==ADMIN_ID:
+
+    user=text.split(" ")[2]
+
+    if user in users:
+        users[user]["approved"]=True
+        save_users(users)
+
+        bot.send_message(user,"✅ Payment Approved. Access Granted.")
+        bot.send_message(msg.chat.id,f"Approved {user}")
+
+    return
+
+# ================= REJECT =================
+
+if text.startswith("❌ Reject") and msg.chat.id==ADMIN_ID:
+
+    user=text.split(" ")[2]
+
+    if user in users:
+        bot.send_message(user,"❌ Payment Rejected")
+        bot.send_message(msg.chat.id,f"Rejected {user}")
+
+    return
