@@ -92,15 +92,19 @@ def analyze_market(prices):
 
     print("FAST:",fast_ma,"SLOW:",slow_ma,"RSI:",rsi)
 
-    # CALL CONDITION
-    if fast_ma>slow_ma and rsi<65:
+    # CALL
+    if fast_ma>slow_ma and rsi<75:
         return "CALL"
 
-    # PUT CONDITION
-    if fast_ma<slow_ma and rsi>35:
+    # PUT
+    if fast_ma<slow_ma and rsi>25:
         return "PUT"
 
-    return None
+    # fallback signal (anti silence)
+    if fast_ma>slow_ma:
+        return "CALL"
+
+    return "PUT"
 
 
 # ================= SIGNAL ENGINE =================
