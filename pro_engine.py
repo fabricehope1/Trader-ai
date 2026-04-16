@@ -1,11 +1,12 @@
 import requests
 import statistics
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 API_KEY="f29c55ce7132437e86f7b025670ec8e4"
 
-# ===== CORRECT PAIRS =====
+# ================= PAIRS =================
+
 PAIRS=[
     "EUR/USD",
     "GBP/USD",
@@ -13,7 +14,7 @@ PAIRS=[
     "AUD/USD"
 ]
 
-# ================= GET MARKET DATA =================
+# ================= GET DATA =================
 
 def get_prices(pair):
 
@@ -61,7 +62,7 @@ def calculate_rsi(prices,period=14):
     return round(100-(100/(1+rs)),2)
 
 
-# ================= MARKET ANALYSIS =================
+# ================= ANALYSIS =================
 
 def analyze_market(prices):
 
@@ -74,74 +75,74 @@ def analyze_market(prices):
 
     score=0
 
-    # TREND
     if fast_ma>slow_ma:
         score+=1
     else:
         score-=1
 
-    # MOMENTUM
     if momentum>0:
         score+=1
     else:
         score-=1
 
-    # RSI CONFIRMATION
     if rsi<35:
         score+=1
     elif rsi>65:
         score-=1
 
-    # ===== FINAL DECISION =====
     direction="CALL" if score>=0 else "PUT"
-
     confidence=70+abs(score)*10
 
     return direction,confidence,rsi
 
 
-# ================= SIGNAL GENERATOR =================
+# ================= ENTRY TIME =================
 
-def generate_signal(pair):
+def next_entry(timeframe):
+
+    now=datetime.now(ZoneInfo("Africa/Kigali"))
+
+    if timeframe=="M1":
+        entry=now+timedelta(minutes=1)
+    elif timeframe=="M5":
+        entry=now+timedelta(minutes=5)
+    else:
+        entry=now+timedelta(minutes=15)
+
+    return entry.strftime("%H:%M:%S")
+
+
+# ================= SIGNAL =================
+
+def generate_signal(pair,timeframe):
 
     prices,current_price=get_prices(pair)
 
-    # NEVER SILENT
     if prices is None:
         return {
-            "pair":pair,
-            "direction":"WAIT",
-            "confidence":0,
-            "expiry":"--",
-            "time":"NO DATA",
-            "rsi":0,
-            "price":0
+            "status":"wait",
+            "message":"⏳ Market data loading..."
         }
 
     direction,confidence,rsi=analyze_market(prices)
 
-    rwanda_time=datetime.now(
-        ZoneInfo("Africa/Kigali")
-    ).strftime("%H:%M:%S")
+    entry_time=next_entry(timeframe)
+
+    # ✅ FULL MESSAGE CREATED INSIDE ENGINE
+    message=f"""
+📊 AI SIGNAL
+
+Pair: {pair}
+Signal: {direction}
+Timeframe: {timeframe}
+
+Price: {round(current_price,5)}
+Next Entry: {entry_time}
+
+Accuracy: {confidence}%
+"""
 
     return {
-        "pair":pair,
-        "direction":direction,
-        "confidence":confidence,
-        "expiry":"1 MIN",
-        "time":rwanda_time,
-        "rsi":rsi,
-        "price":round(current_price,5)
+        "status":"success",
+        "message":message
     }
-
-# ================= TEST RUN =================
-
-if __name__=="__main__":
-
-    print("=== SIGNAL ENGINE STARTED ===")
-
-    for pair in PAIRS:
-
-        signal=generate_signal(pair)
-
-        print(signal)
