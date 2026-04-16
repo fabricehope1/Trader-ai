@@ -8,10 +8,10 @@ from zoneinfo import ZoneInfo
 API_KEY="f29c55ce7132437e86f7b025670ec8e4"
 
 PAIRS=[
-    "EURUSD",
-    "GBPUSD",
-    "USDJPY",
-    "AUDUSD"
+    "EUR/USD",
+    "GBP/USD",
+    "USD/JPY",
+    "AUD/USD"
 ]
 
 TIMEFRAME_MAP={
