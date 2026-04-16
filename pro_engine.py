@@ -9,32 +9,48 @@ PAIRS=[
 "AUDUSD","USDCAD","USDCHF","EURJPY"
 ]
 
-last_analysis={}
+last_signal={}
 
 # ================= RWANDA TIME =================
 
 def rwanda_time():
     return (datetime.utcnow()+timedelta(hours=2)).strftime("%H:%M:%S")
 
-# ================= GET DATA =================
+# ================= SAFE API REQUEST =================
 
 def get_candles(pair):
 
     try:
-        url=f"https://api.twelvedata.com/time_series?symbol={pair}&interval=1min&outputsize=60&apikey={API_KEY}"
-        data=requests.get(url,timeout=10).json()
 
-        closes=[float(x["close"]) for x in data["values"]]
+        url=f"https://api.twelvedata.com/time_series"
+
+        params={
+            "symbol":pair,
+            "interval":"1min",
+            "outputsize":50,
+            "apikey":API_KEY
+        }
+
+        r=requests.get(url,params=params,timeout=10)
+        data=r.json()
+
+        # ===== API ERROR CHECK =====
+        if "values" not in data:
+            print("API RESPONSE:",data)
+            return None
+
+        closes=[float(c["close"]) for c in data["values"]]
         closes.reverse()
 
         return closes
 
-    except:
+    except Exception as e:
+        print("DATA ERROR:",e)
         return None
 
 # ================= RSI =================
 
-def rsi_calc(closes,period=14):
+def calc_rsi(closes,period=14):
 
     gains=[]
     losses=[]
@@ -50,8 +66,8 @@ def rsi_calc(closes,period=14):
     if len(gains)<period:
         return None
 
-    avg_gain=statistics.mean(gains[-period:])
-    avg_loss=statistics.mean(losses[-period:])
+    avg_gain=sum(gains[-period:])/period
+    avg_loss=sum(losses[-period:])/period
 
     if avg_loss==0:
         return 100
@@ -72,67 +88,84 @@ def trend(closes):
         return "DOWN"
     return "SIDE"
 
-# ================= ANALYSIS ENGINE =================
+# ================= SIGNAL ENGINE =================
 
 def generate_signal(pair,timeframe):
 
-    now=datetime.utcnow()
-    key=f"{pair}_{timeframe}"
+    try:
 
-    # ===== Anti Spam 1 minute =====
-    if key in last_analysis:
-        if (now-last_analysis[key]).seconds<60:
+        now=datetime.utcnow()
+        key=f"{pair}_{timeframe}"
+
+        # ===== ONE SIGNAL PER MINUTE =====
+        if key in last_signal:
+            diff=(now-last_signal[key]).seconds
+            if diff<60:
+                return {
+                    "status":"wait",
+                    "message":"⏳ Tegereza minute 1"
+                }
+
+        closes=get_candles(pair)
+
+        if closes is None:
             return {
-                "status":"wait",
-                "message":"⏳ Market iracyategurwa..."
+                "status":"error",
+                "message":"Market data unavailable"
             }
 
-    closes=get_candles(pair)
+        price=closes[-1]
+        rsi=calc_rsi(closes)
+        tr=trend(closes)
 
-    if not closes:
-        return {"status":"error"}
+        if rsi is None:
+            return {
+                "status":"wait",
+                "message":"Market loading..."
+            }
 
-    price=closes[-1]
-    rsi=rsi_calc(closes)
-    tr=trend(closes)
+        signal=None
+        strength="WEAK"
 
-    if rsi is None:
-        return {"status":"wait","message":"Loading market..."}
+        # ===== REAL LOGIC =====
+        if rsi<30 and tr=="UP":
+            signal="CALL"
+            strength="🔥 STRONG"
 
-    signal=None
-    strength="WEAK"
+        elif rsi>70 and tr=="DOWN":
+            signal="PUT"
+            strength="🔥 STRONG"
 
-    # ===== SMART ENTRY LOGIC =====
-    if rsi<30 and tr=="UP":
-        signal="CALL"
-        strength="🔥 STRONG"
+        elif rsi<40:
+            signal="CALL"
 
-    elif rsi>70 and tr=="DOWN":
-        signal="PUT"
-        strength="🔥 STRONG"
+        elif rsi>60:
+            signal="PUT"
 
-    elif rsi<40:
-        signal="CALL"
+        if signal is None:
+            return {
+                "status":"wait",
+                "message":"No clean setup"
+            }
 
-    elif rsi>60:
-        signal="PUT"
+        last_signal[key]=now
 
-    if signal is None:
-        return {"status":"wait","message":"No clean setup"}
+        entry=(datetime.utcnow()+timedelta(seconds=30)+timedelta(hours=2)).strftime("%H:%M:%S")
 
-    last_analysis[key]=now
+        return {
+            "status":"prepare",
+            "pair":pair,
+            "direction":signal,
+            "strength":strength,
+            "rsi":rsi,
+            "price":price,
+            "entry_time":entry,
+            "time":rwanda_time()
+        }
 
-    # ===== PREPARATION TIME =====
-    entry_time=(datetime.utcnow()+timedelta(seconds=30))
-
-    return {
-        "status":"prepare",
-        "pair":pair,
-        "direction":signal,
-        "strength":strength,
-        "price":price,
-        "rsi":rsi,
-        "analysis_time":rwanda_time(),
-        "entry_at":(entry_time+timedelta(hours=2)).strftime("%H:%M:%S"),
-        "message":"⚡ Market Ready — Tegereza entry time"
-    }
+    except Exception as e:
+        print("ENGINE ERROR:",e)
+        return {
+            "status":"error",
+            "message":"Engine crashed"
+        }
