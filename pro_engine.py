@@ -1,5 +1,5 @@
-from bit import generate_signal as engine_signal, PAIRS
 import requests
+import statistics
 import json
 import os
 import threading
@@ -7,114 +7,185 @@ import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+# ================= SETTINGS =================
+
 API_KEY="f29c55ce7132437e86f7b025670ec8e4"
 
-STATS_FILE="accuracy.json"
+PAIRS=[
+    "EUR/USD",
+    "GBP/USD",
+    "USD/JPY",
+    "AUD/USD"
+]
 
+TIMEFRAME_MAP={
+    "M1":"1min",
+    "M5":"5min",
+    "M15":"15min"
+}
 
-# ================= LOAD/SAVE STATS =================
+RESULT_FILE="results.json"
 
-def load_stats():
+# ================= RESULT STORAGE =================
 
-    if not os.path.exists(STATS_FILE):
-        return {"wins":0,"losses":0}
+def load_results():
+    if not os.path.exists(RESULT_FILE):
+        return {"win":0,"loss":0}
+    return json.load(open(RESULT_FILE))
 
-    with open(STATS_FILE,"r") as f:
-        return json.load(f)
+def save_results(data):
+    json.dump(data,open(RESULT_FILE,"w"))
 
-
-def save_stats(stats):
-
-    with open(STATS_FILE,"w") as f:
-        json.dump(stats,f)
-
-
-def record_result(result):
-
-    stats=load_stats()
-
-    if result=="WIN":
-        stats["wins"]+=1
-    else:
-        stats["losses"]+=1
-
-    save_stats(stats)
-
-
-def get_accuracy():
-
-    stats=load_stats()
-    total=stats["wins"]+stats["losses"]
-
+def accuracy():
+    r=load_results()
+    total=r["win"]+r["loss"]
     if total==0:
         return "0%"
+    return f"{round((r['win']/total)*100,1)}%"
 
-    acc=round((stats["wins"]/total)*100,2)
-    return f"{acc}%"
+# ================= MARKET DATA =================
 
+def get_prices(pair,timeframe):
 
-# ================= GET CURRENT PRICE =================
+    tf=TIMEFRAME_MAP[timeframe]
 
-def get_current_price(pair):
-
-    symbol=pair.replace("/","")
-
-    url=f"https://api.twelvedata.com/price?symbol={symbol}&apikey={API_KEY}"
+    url=f"https://api.twelvedata.com/time_series?symbol={pair}&interval={tf}&outputsize=60&apikey={API_KEY}"
 
     r=requests.get(url).json()
 
-    if "price" not in r:
+    if "values" not in r:
+        print("API ERROR:",r)
         return None
 
-    return float(r["price"])
+    closes=[float(c["close"]) for c in r["values"]]
 
+    closes.reverse()
 
-# ================= AUTO RESULT CHECK =================
+    return closes
 
-def auto_check(pair,signal,entry_price):
+# ================= RSI =================
 
-    # wait 60 sec candle close
-    time.sleep(60)
+def calculate_rsi(prices,period=14):
 
-    exit_price=get_current_price(pair)
+    gains=[]
+    losses=[]
 
-    if not exit_price:
-        return
+    for i in range(1,len(prices)):
+        diff=prices[i]-prices[i-1]
 
-    if "CALL" in signal:
-        result="WIN" if exit_price>entry_price else "LOSS"
-    else:
-        result="WIN" if exit_price<entry_price else "LOSS"
+        if diff>0:
+            gains.append(diff)
+            losses.append(0)
+        else:
+            gains.append(0)
+            losses.append(abs(diff))
 
-    record_result(result)
+    avg_gain=sum(gains[-period:])/period
+    avg_loss=sum(losses[-period:])/period
 
-    print(f"AUTO RESULT → {pair} {result}")
+    if avg_loss==0:
+        return 100
 
+    rs=avg_gain/avg_loss
+    return round(100-(100/(1+rs)),2)
 
-# ================= MAIN SIGNAL =================
+# ================= TREND =================
 
-def generate_signal(pair):
+def get_trend(prices):
 
-    data=engine_signal(pair)
+    sma_fast=statistics.mean(prices[-10:])
+    sma_slow=statistics.mean(prices[-30:])
 
-    if data["status"]!="success":
-        return data
+    return "UP" if sma_fast>sma_slow else "DOWN"
 
-    entry_price=float(data["signal"].split("Price: ")[1].split("\n")[0])
+# ================= AUTO WIN TRACKER =================
 
-    # start background win checker
-    threading.Thread(
-        target=auto_check,
-        args=(pair,data["signal"],entry_price),
-        daemon=True
-    ).start()
+def record_result(pair,timeframe,signal,entry_price):
 
-    accuracy=get_accuracy()
+    def check():
 
-    data["signal"]+=f"""
+        time.sleep(65)  # wait next candle
 
-🤖 Auto Result Tracking ON
-📊 REAL ACCURACY: {accuracy}
-"""
+        prices=get_prices(pair,timeframe)
+        if not prices:
+            return
 
-    return data
+        new_price=prices[-1]
+
+        result=load_results()
+
+        win=False
+
+        if signal=="CALL 📈" and new_price>entry_price:
+            win=True
+        elif signal=="PUT 📉" and new_price<entry_price:
+            win=True
+
+        if win:
+            result["win"]+=1
+        else:
+            result["loss"]+=1
+
+        save_results(result)
+
+        print("RESULT UPDATED:",result)
+
+    threading.Thread(target=check).start()
+
+# ================= SIGNAL ENGINE =================
+
+def generate_signal(pair,timeframe):
+
+    try:
+
+        prices=get_prices(pair,timeframe)
+
+        if not prices:
+            return {"status":"error"}
+
+        price=round(prices[-1],5)
+
+        rsi=calculate_rsi(prices)
+        trend=get_trend(prices)
+
+        # ===== SMART MARKET ANALYSIS =====
+
+        if rsi<35:
+            signal="CALL 📈"
+        elif rsi>65:
+            signal="PUT 📉"
+        else:
+            return {
+                "status":"wait",
+                "message":"⏳ Market analysing... wait next setup"
+            }
+
+        # ===== ENTRY TIME WITH SECONDS =====
+
+        now=datetime.now(ZoneInfo("Africa/Kigali"))
+        entry_time=now.strftime("%H:%M:%S")
+
+        # START AUTO TRACKER
+        record_result(pair,timeframe,signal,price)
+
+        return {
+            "status":"success",
+            "pair":pair,
+            "signal":f"""
+📊 PAIR: {pair}
+💰 Price: {price}
+📉 RSI: {rsi}
+📈 Trend: {trend}
+
+⏱ Entry Time: {entry_time}
+
+🔥 SIGNAL: {signal}
+""",
+            "timeframe":timeframe,
+            "entry_time":entry_time,
+            "accuracy":accuracy()
+        }
+
+    except Exception as e:
+        print("ENGINE ERROR:",e)
+        return {"status":"error"}
