@@ -133,3 +133,15 @@ def generate_signal(pair):
         "rsi":rsi,
         "price":round(current_price,5)
     }
+
+# ================= TEST RUN =================
+
+if __name__=="__main__":
+
+    print("=== SIGNAL ENGINE STARTED ===")
+
+    for pair in PAIRS:
+
+        signal=generate_signal(pair)
+
+        print(signal)
