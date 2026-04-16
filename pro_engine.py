@@ -1,51 +1,31 @@
 import requests
-import random
 from datetime import datetime, timedelta
 
 # ================= PAIRS =================
 
-PAIRS=[
-    "EURUSD",
-    "GBPUSD",
-    "USDJPY",
-    "AUDUSD",
-    "USDCAD",
-    "USDCHF",
-    "EURJPY"
-]
+PAIRS = {
+    "EURUSD": "EURUSDT",
+    "GBPUSD": "GBPUSDT",
+    "USDJPY": "JPYUSDT",
+    "AUDUSD": "AUDUSDT"
+}
 
-# ================= GET PRICE =================
+# ================= GET REAL CANDLES =================
 
-def get_price(pair):
+def get_candles(symbol, interval="1m", limit=100):
 
-    base=pair[:3]
-    quote=pair[3:]
+    url=f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
 
-    # API 1
-    try:
-        url=f"https://open.er-api.com/v6/latest/{base}"
-        r=requests.get(url,timeout=5).json()
+    data=requests.get(url,timeout=10).json()
 
-        if "rates" in r:
-            return float(r["rates"][quote])
-    except:
-        pass
+    closes=[float(candle[4]) for candle in data]
 
-    # API 2 BACKUP
-    try:
-        url=f"https://api.exchangerate.host/latest?base={base}&symbols={quote}"
-        r=requests.get(url,timeout=5).json()
+    return closes
 
-        return float(r["rates"][quote])
-    except:
-        pass
-
-    # FINAL BACKUP (NEVER ERROR)
-    return random.uniform(1.0,1.5)
 
 # ================= RSI =================
 
-def calculate_rsi(prices):
+def calculate_rsi(prices,period=14):
 
     gains=[]
     losses=[]
@@ -60,8 +40,8 @@ def calculate_rsi(prices):
             gains.append(0)
             losses.append(abs(diff))
 
-    avg_gain=sum(gains[-14:])/14
-    avg_loss=sum(losses[-14:])/14
+    avg_gain=sum(gains[-period:])/period
+    avg_loss=sum(losses[-period:])/period
 
     if avg_loss==0:
         return 100
@@ -69,39 +49,42 @@ def calculate_rsi(prices):
     rs=avg_gain/avg_loss
     return 100-(100/(1+rs))
 
+
 # ================= EMA =================
 
 def ema(prices,period):
     k=2/(period+1)
     value=prices[0]
 
-    for p in prices:
-        value=p*k+value*(1-k)
+    for price in prices:
+        value=price*k+value*(1-k)
 
     return value
+
 
 # ================= MACD =================
 
 def macd(prices):
     return ema(prices,12)-ema(prices,26)
 
+
 # ================= ANALYSIS =================
 
-def analyze_market(price):
-
-    prices=[price+random.uniform(-0.001,0.001) for _ in range(60)]
+def analyze_market(prices):
 
     rsi=calculate_rsi(prices)
+
     ema_fast=ema(prices,9)
     ema_slow=ema(prices,21)
+
     macd_val=macd(prices)
 
     call=0
     put=0
 
-    if rsi<50:
+    if rsi<35:
         call+=1
-    else:
+    elif rsi>65:
         put+=1
 
     if ema_fast>ema_slow:
@@ -114,36 +97,33 @@ def analyze_market(price):
     else:
         put+=1
 
-    return "CALL" if call>=put else "PUT",rsi
+    signal="CALL" if call>=put else "PUT"
+
+    return signal,rsi
+
 
 # ================= SIGNAL =================
 
 def generate_signal(pair,timeframe):
 
-    try:
+    symbol=PAIRS.get(pair)
 
-        price=get_price(pair)
+    if not symbol:
+        return {"status":"error"}
 
-        signal,rsi=analyze_market(price)
+    prices=get_candles(symbol,"1m")
 
-        entry_time=(datetime.utcnow()+timedelta(hours=2)).strftime("%H:%M:%S GMT+2")
+    signal,rsi=analyze_market(prices)
 
-        accuracy=random.randint(93,99)
+    entry_time=(datetime.utcnow()+timedelta(hours=2)).strftime("%H:%M:%S GMT+2")
 
-        return {
-            "status":"success",
-            "pair":pair,
-            "signal":signal,
-            "timeframe":timeframe,
-            "entry_time":entry_time,
-            "accuracy":f"{accuracy}%"
-        }
+    accuracy="REAL DATA"
 
-    except Exception as e:
-        print("ENGINE ERROR:",e)
-        return {"status":"success",
-            "pair":pair,
-            "signal":random.choice(["CALL","PUT"]),
-            "timeframe":timeframe,
-            "entry_time":"NOW",
-            "accuracy":"90%"}
+    return {
+        "status":"success",
+        "pair":pair,
+        "signal":signal,
+        "timeframe":timeframe,
+        "entry_time":entry_time,
+        "accuracy":accuracy
+    }
