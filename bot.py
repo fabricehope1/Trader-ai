@@ -2,7 +2,7 @@ import telebot
 import json
 import os
 from telebot.types import ReplyKeyboardMarkup
-from pro_engine import generate_signal, PAIRS
+from pro_engine import generate_signal,PAIRS
 
 TOKEN=os.getenv("BOT_TOKEN")
 ADMIN_ID=8448217655
@@ -134,39 +134,45 @@ def messages(msg):
             reply_markup=kb)
         return
 
-# ================= TIMEFRAME (FIXED) =================
+# ================= TIMEFRAME =================
 
-    if text in ["M1","M5","M15"]:
+    # ===== TIMEFRAME SELECTION =====
 
-        pair=user_pair.get(msg.chat.id)
+if text in ["M1", "M5", "M15"]:
 
-        if not pair:
-            bot.send_message(msg.chat.id,"⚠️ Select pair first")
-            return
+    pair = user_pair.get(msg.chat.id)
 
-        timeframe=text
-
-        if result.get("status")=="success":
-    bot.send_message(
-        msg.chat.id,
-        result["message"]
-    )
-
-elif result.get("status")=="wait":
-    bot.send_message(msg.chat.id,result["message"])
-
-else:
-    bot.send_message(msg.chat.id,"⚠️ Signal error")
-
-        # WAIT
-        elif result.get("status")=="wait":
-            bot.send_message(msg.chat.id,result["message"])
-
-        # ERROR
-        else:
-            bot.send_message(msg.chat.id,"⚠️ Signal error")
-
+    if not pair:
+        bot.send_message(msg.chat.id, "⚠️ Select pair first")
         return
+
+    timeframe = text
+
+    result = generate_signal(pair, timeframe)
+
+    # SUCCESS
+    if result.get("status") == "success":
+
+        message = f"""
+📊 AI SIGNAL
+
+Pair: {result['pair']}
+Signal: {result['signal']}
+Timeframe: {result['timeframe']}
+Entry Time: {result['entry_time']}
+Accuracy: {result['accuracy']}
+"""
+
+        bot.send_message(msg.chat.id, message)
+
+    # WAIT
+    elif result.get("status") == "wait":
+
+        bot.send_message(msg.chat.id, result["message"])
+
+    # ERROR
+    else:
+        bot.send_message(msg.chat.id, "⚠️ Signal error")
 
 # ================= ADMIN PANEL =================
 
@@ -180,7 +186,7 @@ else:
         bot.send_message(msg.chat.id,"ADMIN PANEL",reply_markup=kb)
         return
 
-# ================= BROADCAST =================
+# ================= BROADCAST START =================
 
     if text=="📩 Broadcast" and msg.chat.id==ADMIN_ID:
 
@@ -252,7 +258,7 @@ else:
         waiting_payment.pop(msg.chat.id)
         return
 
-# ================= BROADCAST SEND (PRO) =================
+# ================= SEND BROADCAST =================
 
     if msg.chat.id in waiting_broadcast:
 
@@ -260,28 +266,22 @@ else:
 
         for user in users:
             try:
-                bot.copy_message(
-                    chat_id=user,
-                    from_chat_id=msg.chat.id,
-                    message_id=msg.message_id
-                )
+                if msg.content_type=="text":
+                    bot.send_message(user,msg.text)
+                else:
+                    bot.send_photo(user,msg.photo[-1].file_id,caption=msg.caption)
                 sent+=1
             except:
                 pass
 
-        bot.send_message(
-            msg.chat.id,
-            f"✅ Broadcast sent to {sent} users"
-        )
+        bot.send_message(msg.chat.id,f"✅ Broadcast sent to {sent} users")
 
         waiting_broadcast.pop(msg.chat.id)
         main_menu(msg.chat.id)
         return
 
-# ================= START BOT =================
-
 bot.infinity_polling(
     timeout=60,
     long_polling_timeout=60,
     skip_pending=True
-    )
+        )
