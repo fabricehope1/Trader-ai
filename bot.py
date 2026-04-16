@@ -2,7 +2,7 @@ import telebot
 import json
 import os
 from telebot.types import ReplyKeyboardMarkup
-from pro_engine import generate_signal,PAIRS
+from pro_engine import generate_signal, PAIRS
 
 TOKEN=os.getenv("BOT_TOKEN")
 ADMIN_ID=8448217655
@@ -134,26 +134,24 @@ def messages(msg):
             reply_markup=kb)
         return
 
-# ================= TIMEFRAME =================
+# ================= TIMEFRAME (FIXED) =================
 
-    # ===== TIMEFRAME SELECTION =====
+    if text in ["M1","M5","M15"]:
 
-if text in ["M1", "M5", "M15"]:
+        pair=user_pair.get(msg.chat.id)
 
-    pair = user_pair.get(msg.chat.id)
+        if not pair:
+            bot.send_message(msg.chat.id,"⚠️ Select pair first")
+            return
 
-    if not pair:
-        bot.send_message(msg.chat.id, "⚠️ Select pair first")
-        return
+        timeframe=text
 
-    timeframe = text
+        result=generate_signal(pair,timeframe)
 
-    result = generate_signal(pair, timeframe)
+        # SUCCESS
+        if result.get("status")=="success":
 
-    # SUCCESS
-    if result.get("status") == "success":
-
-        message = f"""
+            message=f"""
 📊 AI SIGNAL
 
 Pair: {result['pair']}
@@ -163,16 +161,17 @@ Entry Time: {result['entry_time']}
 Accuracy: {result['accuracy']}
 """
 
-        bot.send_message(msg.chat.id, message)
+            bot.send_message(msg.chat.id,message)
 
-    # WAIT
-    elif result.get("status") == "wait":
+        # WAIT
+        elif result.get("status")=="wait":
+            bot.send_message(msg.chat.id,result["message"])
 
-        bot.send_message(msg.chat.id, result["message"])
+        # ERROR
+        else:
+            bot.send_message(msg.chat.id,"⚠️ Signal error")
 
-    # ERROR
-    else:
-        bot.send_message(msg.chat.id, "⚠️ Signal error")
+        return
 
 # ================= ADMIN PANEL =================
 
@@ -186,7 +185,7 @@ Accuracy: {result['accuracy']}
         bot.send_message(msg.chat.id,"ADMIN PANEL",reply_markup=kb)
         return
 
-# ================= BROADCAST START =================
+# ================= BROADCAST =================
 
     if text=="📩 Broadcast" and msg.chat.id==ADMIN_ID:
 
@@ -258,7 +257,7 @@ Accuracy: {result['accuracy']}
         waiting_payment.pop(msg.chat.id)
         return
 
-# ================= SEND BROADCAST =================
+# ================= BROADCAST SEND =================
 
     if msg.chat.id in waiting_broadcast:
 
@@ -280,8 +279,10 @@ Accuracy: {result['accuracy']}
         main_menu(msg.chat.id)
         return
 
+# ================= START BOT =================
+
 bot.infinity_polling(
     timeout=60,
     long_polling_timeout=60,
     skip_pending=True
-        )
+    )
