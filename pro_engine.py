@@ -1,106 +1,122 @@
+# pro_engine.py
+
+from bit import generate_signal as engine_signal, PAIRS
 import requests
-import statistics
+import json
+import os
+import threading
+import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-# ================= SETTINGS =================
-
 API_KEY="f29c55ce7132437e86f7b025670ec8e4"
 
-PAIRS=[
-    "EUR/USD",
-    "GBP/USD",
-    "USD/JPY",
-    "AUD/USD",
-    "EUR/JPY",
-    "AUD/CAD"
-]
+STATS_FILE="accuracy.json"
 
-TIMEFRAME_MAP={
-    "M1":"1min",
-    "M5":"5min",
-    "M15":"15min"
-}
 
-# ================= GET MARKET DATA =================
+# ================= LOAD/SAVE STATS =================
 
-def generate_signal(pair,timeframe):
+def load_stats():
 
-    try:
+    if not os.path.exists(STATS_FILE):
+        return {"wins":0,"losses":0}
 
-        prices=get_prices(pair,timeframe)
+    with open(STATS_FILE,"r") as f:
+        return json.load(f)
 
-        if not prices:
-            return {"status":"error"}
 
-        price=round(prices[-1],5)
+def save_stats(stats):
 
-        rsi=calculate_rsi(prices)
-        trend=get_trend(prices)
+    with open(STATS_FILE,"w") as f:
+        json.dump(stats,f)
 
-        # ================= MARKET ANALYSIS =================
 
-        analysis=f"""
-📊 MARKET ANALYSIS
-Trend: {trend}
-RSI Zone: {"Oversold" if rsi<30 else "Overbought" if rsi>70 else "Neutral"}
-Momentum: {"Bullish" if trend=="UP" else "Bearish"}
+def record_result(result):
+
+    stats=load_stats()
+
+    if result=="WIN":
+        stats["wins"]+=1
+    else:
+        stats["losses"]+=1
+
+    save_stats(stats)
+
+
+def get_accuracy():
+
+    stats=load_stats()
+    total=stats["wins"]+stats["losses"]
+
+    if total==0:
+        return "0%"
+
+    acc=round((stats["wins"]/total)*100,2)
+    return f"{acc}%"
+
+
+# ================= GET CURRENT PRICE =================
+
+def get_current_price(pair):
+
+    symbol=pair.replace("/","")
+
+    url=f"https://api.twelvedata.com/price?symbol={symbol}&apikey={API_KEY}"
+
+    r=requests.get(url).json()
+
+    if "price" not in r:
+        return None
+
+    return float(r["price"])
+
+
+# ================= AUTO RESULT CHECK =================
+
+def auto_check(pair,signal,entry_price):
+
+    # wait 60 sec candle close
+    time.sleep(60)
+
+    exit_price=get_current_price(pair)
+
+    if not exit_price:
+        return
+
+    if "CALL" in signal:
+        result="WIN" if exit_price>entry_price else "LOSS"
+    else:
+        result="WIN" if exit_price<entry_price else "LOSS"
+
+    record_result(result)
+
+    print(f"AUTO RESULT → {pair} {result}")
+
+
+# ================= MAIN SIGNAL =================
+
+def generate_signal(pair):
+
+    data=engine_signal(pair)
+
+    if data["status"]!="success":
+        return data
+
+    entry_price=float(data["signal"].split("Price: ")[1].split("\n")[0])
+
+    # start background win checker
+    threading.Thread(
+        target=auto_check,
+        args=(pair,data["signal"],entry_price),
+        daemon=True
+    ).start()
+
+    accuracy=get_accuracy()
+
+    data["signal"]+=f"""
+
+🤖 Auto Result Tracking ON
+📊 REAL ACCURACY: {accuracy}
 """
 
-        # ================= SIGNAL LOGIC =================
-
-        if rsi<=35:
-            signal="CALL 📈"
-
-        elif rsi>=65:
-            signal="PUT 📉"
-
-        else:
-            signal="CALL 📈" if trend=="UP" else "PUT 📉"
-
-        # ================= ENTRY TIME (NEXT CANDLE) =================
-
-        now=datetime.now(ZoneInfo("Africa/Kigali"))
-
-        if timeframe=="M1":
-            next_time=now.replace(second=0,microsecond=0)
-            next_time=next_time.replace(minute=now.minute+1)
-
-        elif timeframe=="M5":
-            minute=(now.minute//5+1)*5
-            next_time=now.replace(minute=0,second=0,microsecond=0)
-            next_time=next_time.replace(minute=minute)
-
-        elif timeframe=="M15":
-            minute=(now.minute//15+1)*15
-            next_time=now.replace(minute=0,second=0,microsecond=0)
-            next_time=next_time.replace(minute=minute)
-
-        entry_time=next_time.strftime("%H:%M:%S")
-
-        accuracy=f"{round(80+abs(50-rsi)/3,1)}%"
-
-        return {
-            "status":"success",
-            "pair":pair,
-            "signal":f"""
-{analysis}
-
-📊 PAIR: {pair}
-💰 Price: {price}
-📉 RSI: {rsi}
-📈 Trend: {trend}
-
-⏱ ENTRY TIME: {entry_time}
-
-🔥 SIGNAL: {signal}
-""",
-            "timeframe":timeframe,
-            "entry_time":entry_time,
-            "accuracy":accuracy
-        }
-
-    except Exception as e:
-        print("ENGINE ERROR:",e)
-        return {"status":"error"}
-        
+    return data
