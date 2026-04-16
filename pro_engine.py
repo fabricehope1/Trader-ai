@@ -1,12 +1,9 @@
 import requests
-from datetime import datetime
 import statistics
-
-# ================= API =================
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 API_KEY="f29c55ce7132437e86f7b025670ec8e4"
-
-# ================= PAIRS =================
 
 PAIRS=[
     "EUR/USD",
@@ -15,46 +12,27 @@ PAIRS=[
     "AUD/USD"
 ]
 
-# ================= CACHE =================
+# ================= GET DATA =================
 
-cached_signal=None
-last_signal_time=None
-
-
-# ================= GET CANDLES =================
-
-def get_candles(pair):
+def get_prices(pair):
 
     url=f"https://api.twelvedata.com/time_series?symbol={pair}&interval=1min&outputsize=30&apikey={API_KEY}"
 
-    try:
-        r=requests.get(url,timeout=10)
+    r=requests.get(url).json()
 
-        # HTTP ERROR CHECK
-        if r.status_code != 200:
-            print("HTTP ERROR:",r.status_code)
-            return None
+    if "values" not in r:
+        print("API ERROR:",r)
+        return None,None
 
-        data=r.json()
+    prices=[float(c["close"]) for c in reversed(r["values"])]
+    current_price=prices[-1]
 
-        # DEBUG RESPONSE
-        if "values" not in data:
-            print("API ERROR RESPONSE:",data)
-            return None
-
-        closes=[float(c["close"]) for c in data["values"]]
-        closes.reverse()
-
-        return closes
-
-    except Exception as e:
-        print("REQUEST FAILED:",e)
-        return None
+    return prices,current_price
 
 
 # ================= RSI =================
 
-def calculate_rsi(prices,period=7):
+def calculate_rsi(prices,period=14):
 
     gains=[]
     losses=[]
@@ -64,93 +42,86 @@ def calculate_rsi(prices,period=7):
 
         if diff>0:
             gains.append(diff)
+            losses.append(0)
         else:
+            gains.append(0)
             losses.append(abs(diff))
 
-    if len(gains)==0 or len(losses)==0:
-        return 50
-
-    avg_gain=sum(gains)/period
-    avg_loss=sum(losses)/period
+    avg_gain=statistics.mean(gains[-period:])
+    avg_loss=statistics.mean(losses[-period:])
 
     if avg_loss==0:
         return 100
 
     rs=avg_gain/avg_loss
+    rsi=100-(100/(1+rs))
 
-    return 100-(100/(1+rs))
+    return round(rsi,2)
 
 
-# ================= MARKET ANALYSIS =================
+# ================= SIMPLE MARKET ANALYSIS =================
 
 def analyze_market(prices):
 
-    fast_ma=statistics.mean(prices[-5:])
-    slow_ma=statistics.mean(prices[-20:])
-
     rsi=calculate_rsi(prices)
 
-    print("FAST:",fast_ma,"SLOW:",slow_ma,"RSI:",rsi)
+    fast_ma=statistics.mean(prices[-5:])
+    slow_ma=statistics.mean(prices[-15:])
 
-    # CALL
-    if fast_ma>slow_ma and rsi<75:
-        return "CALL"
+    last_move=prices[-1]-prices[-2]
 
-    # PUT
-    if fast_ma<slow_ma and rsi>25:
-        return "PUT"
+    score=0
 
-    # fallback signal (anti silence)
+    # TREND
     if fast_ma>slow_ma:
-        return "CALL"
+        score+=1
+    else:
+        score-=1
 
-    return "PUT"
+    # MOMENTUM
+    if last_move>0:
+        score+=1
+    else:
+        score-=1
+
+    # RSI FILTER
+    if rsi<30:
+        score+=1
+    elif rsi>70:
+        score-=1
+
+    # DECISION (ntijya iceceka)
+    if score>=0:
+        direction="CALL"
+        confidence=80
+    else:
+        direction="PUT"
+        confidence=80
+
+    return direction,confidence,rsi
 
 
-# ================= SIGNAL ENGINE =================
+# ================= SIGNAL =================
 
-def generate_signal(pair,timeframe):
+def generate_signal(pair):
 
-    global cached_signal,last_signal_time
+    prices,current_price=get_prices(pair)
 
-    now=datetime.utcnow()
+    if not prices:
+        return None
 
-    # ⏳ Anti spam 60s
-    if last_signal_time:
-        diff=(now-last_signal_time).seconds
-        if diff<60:
-            remain=60-diff
-            return {
-                "status":"wait",
-                "message":f"⏳ Tegereza {remain}s"
-            }
+    direction,confidence,rsi=analyze_market(prices)
 
-    prices=get_candles(pair)
+    rwanda_time=datetime.now(
+        ZoneInfo("Africa/Kigali")
+    ).strftime("%H:%M:%S")
 
-    if prices is None:
-        return {
-            "status":"error",
-            "message":"API data ntabwo yabonetse"
-        }
-
-    signal=analyze_market(prices)
-
-    if signal is None:
-        return {
-            "status":"wait",
-            "message":"📉 Market nta confirmation"
-        }
-
-    result={
-        "status":"success",
-        "pair":pair.replace("/",""),
-        "signal":signal,
-        "timeframe":timeframe,
-        "entry_time":now.strftime("%H:%M:%S UTC"),
-        "accuracy":"90%+"
+    return {
+        "pair":pair,
+        "direction":direction,
+        "confidence":confidence,
+        "expiry":"1 MIN",
+        "time":rwanda_time,
+        "rsi":rsi,
+        "price":round(current_price,5)
     }
-
-    cached_signal=result
-    last_signal_time=now
-
-    return result
