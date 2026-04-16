@@ -1,7 +1,8 @@
 import requests
-import statistics
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+
+# ================= API =================
 
 API_KEY="f29c55ce7132437e86f7b025670ec8e4"
 
@@ -14,135 +15,157 @@ PAIRS=[
     "AUD/USD"
 ]
 
-# ================= GET DATA =================
+# ================= TIME =================
 
-def get_prices(pair):
+def rwanda_time():
+    return datetime.now(ZoneInfo("Africa/Kigali"))
 
-    url=f"https://api.twelvedata.com/time_series?symbol={pair}&interval=1min&outputsize=50&apikey={API_KEY}"
+# ================= GET PRICE =================
+
+def get_price(pair):
+
+    symbol=pair.replace("/","")
+
+    url=f"https://api.twelvedata.com/price?symbol={symbol}&apikey={API_KEY}"
 
     try:
-        r=requests.get(url,timeout=10).json()
+        r=requests.get(url).json()
 
-        if "values" not in r:
-            print("API ERROR:",r)
-            return None,None
+        if "price" in r:
+            return float(r["price"])
 
-        prices=[float(c["close"]) for c in reversed(r["values"])]
+    except:
+        pass
 
-        if len(prices)<20:
-            return None,None
+    return None
 
-        return prices,prices[-1]
+# ================= GET CANDLES =================
 
-    except Exception as e:
-        print("REQUEST ERROR:",e)
-        return None,None
+def get_candles(pair,interval="1min"):
 
+    symbol=pair.replace("/","")
+
+    url=f"https://api.twelvedata.com/time_series?symbol={symbol}&interval={interval}&outputsize=50&apikey={API_KEY}"
+
+    try:
+        data=requests.get(url).json()
+
+        if "values" not in data:
+            return []
+
+        closes=[float(c["close"]) for c in data["values"]]
+
+        closes.reverse()
+
+        return closes
+
+    except:
+        return []
 
 # ================= RSI =================
 
-def calculate_rsi(prices,period=14):
+def calculate_rsi(closes,period=14):
+
+    if len(closes)<period+1:
+        return 50
 
     gains=[]
     losses=[]
 
-    for i in range(1,len(prices)):
-        diff=prices[i]-prices[i-1]
+    for i in range(1,len(closes)):
+        diff=closes[i]-closes[i-1]
 
-        gains.append(max(diff,0))
-        losses.append(abs(min(diff,0)))
+        if diff>0:
+            gains.append(diff)
+            losses.append(0)
+        else:
+            gains.append(0)
+            losses.append(abs(diff))
 
-    avg_gain=statistics.mean(gains[-period:])
-    avg_loss=statistics.mean(losses[-period:])
+    avg_gain=sum(gains[-period:])/period
+    avg_loss=sum(losses[-period:])/period
 
     if avg_loss==0:
         return 100
 
     rs=avg_gain/avg_loss
-    return round(100-(100/(1+rs)),2)
 
+    rsi=100-(100/(1+rs))
 
-# ================= ANALYSIS =================
+    return round(rsi,2)
 
-def analyze_market(prices):
+# ================= TREND =================
 
-    rsi=calculate_rsi(prices)
+def trend(closes):
 
-    fast_ma=statistics.mean(prices[-5:])
-    slow_ma=statistics.mean(prices[-20:])
+    if len(closes)<20:
+        return "WAIT"
 
-    momentum=prices[-1]-prices[-3]
+    sma_fast=sum(closes[-5:])/5
+    sma_slow=sum(closes[-20:])/20
 
-    score=0
+    if sma_fast>sma_slow:
+        return "UP"
 
-    if fast_ma>slow_ma:
-        score+=1
+    if sma_fast<sma_slow:
+        return "DOWN"
+
+    return "SIDE"
+
+# ================= NEXT ENTRY TIME =================
+
+def next_entry(tf_minutes):
+
+    now=rwanda_time()
+
+    minute=(now.minute//tf_minutes+1)*tf_minutes
+
+    if minute>=60:
+        entry=now.replace(minute=0,second=0,microsecond=0)+timedelta(hours=1)
     else:
-        score-=1
+        entry=now.replace(minute=minute,second=0,microsecond=0)
 
-    if momentum>0:
-        score+=1
+    return entry.strftime("%H:%M")
+
+# ================= SIGNAL ENGINE =================
+
+def generate_signal(pair):
+
+    closes=get_candles(pair,"1min")
+
+    if not closes:
+        return None
+
+    price=get_price(pair)
+
+    rsi=calculate_rsi(closes)
+
+    market_trend=trend(closes)
+
+    signal=None
+
+    if rsi<30 and market_trend=="UP":
+        signal="CALL 📈"
+
+    elif rsi>70 and market_trend=="DOWN":
+        signal="PUT 📉"
+
     else:
-        score-=1
+        signal="WAIT ⏳"
 
-    if rsi<35:
-        score+=1
-    elif rsi>65:
-        score-=1
+    entry_time=next_entry(1)
 
-    direction="CALL" if score>=0 else "PUT"
-    confidence=70+abs(score)*10
+    analysis=f"""
+📊 PAIR: {pair}
 
-    return direction,confidence,rsi
+💰 Price: {price}
 
+📉 RSI: {rsi}
+📈 Trend: {market_trend}
 
-# ================= ENTRY TIME =================
+⏱ Next Entry: {entry_time}
 
-def next_entry(timeframe):
-
-    now=datetime.now(ZoneInfo("Africa/Kigali"))
-
-    if timeframe=="M1":
-        entry=now+timedelta(minutes=1)
-    elif timeframe=="M5":
-        entry=now+timedelta(minutes=5)
-    else:
-        entry=now+timedelta(minutes=15)
-
-    return entry.strftime("%H:%M:%S")
-
-
-# ================= SIGNAL =================
-
-def generate_signal(pair,timeframe):
-
-    prices,current_price=get_prices(pair)
-
-    if prices is None:
-        return {
-            "status":"wait",
-            "message":"⏳ Market data loading..."
-        }
-
-    direction,confidence,rsi=analyze_market(prices)
-
-    entry_time=next_entry(timeframe)
-
-    # ✅ FULL MESSAGE CREATED INSIDE ENGINE
-    message=f"""
-📊 AI SIGNAL
-
-Pair: {pair}
-Signal: {direction}
-Timeframe: {timeframe}
-
-Price: {round(current_price,5)}
-Next Entry: {entry_time}
-
-Accuracy: {confidence}%
+🔥 Signal: {signal}
 """
 
-    return {
-        "status":"success",
-        "message":message
-    }
+    return analysis
