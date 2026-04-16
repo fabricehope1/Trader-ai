@@ -3,6 +3,17 @@ import random
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+# ================= PAIRS =================
+
+PAIRS=[
+    "EUR/USD",
+    "GBP/USD",
+    "USD/JPY",
+    "AUD/USD"
+]
+
+# ================= SETTINGS =================
+
 API_KEY="f29c55ce7132437e86f7b025670ec8e4"
 
 TIMEFRAME_MAP={
@@ -11,7 +22,7 @@ TIMEFRAME_MAP={
     "M15":"15min"
 }
 
-# ================= GET DATA =================
+# ================= GET MARKET DATA =================
 
 def get_prices(pair,timeframe):
 
@@ -23,7 +34,7 @@ def get_prices(pair,timeframe):
     r=requests.get(url).json()
 
     if "values" not in r:
-        print("API RESPONSE:",r)
+        print("API ERROR:",r)
         return None
 
     prices=[float(x["close"]) for x in r["values"]]
@@ -69,7 +80,7 @@ def get_trend(prices):
     return "UP" if fast>slow else "DOWN"
 
 
-# ================= SIGNAL =================
+# ================= SIGNAL ENGINE =================
 
 def generate_signal(pair,timeframe):
 
@@ -84,10 +95,9 @@ def generate_signal(pair,timeframe):
         rsi=calculate_rsi(prices)
         trend=get_trend(prices)
 
-        # Signal logic
         signal="CALL 🟢" if rsi<50 else "PUT 🔴"
 
-        # Strength
+        # Strength + accuracy
         if rsi<30 or rsi>70:
             strength="STRONG 🔥"
             accuracy=random.randint(85,92)
@@ -98,7 +108,7 @@ def generate_signal(pair,timeframe):
             strength="WEAK ⚠️"
             accuracy=random.randint(60,71)
 
-        # Prepare 30 seconds
+        # Prepare seconds
         now=datetime.now(ZoneInfo("Africa/Kigali"))
         entry_time=(now+timedelta(seconds=30)).strftime("%H:%M:%S")
 
@@ -112,8 +122,8 @@ def generate_signal(pair,timeframe):
 Strength: {strength}
 Accuracy: {accuracy}%
 
-⏳ Prepare: 30 seconds
-🕒 Entry: {entry_time}
+⏳ Prepare: 30s
+🕒 Entry Time: {entry_time}
 ⌛ Expiry: {timeframe}
 """
 
