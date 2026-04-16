@@ -1,5 +1,3 @@
-# pro_engine.py
-
 from bit import generate_signal as engine_signal, PAIRS
 import requests
 import json
