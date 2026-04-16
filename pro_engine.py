@@ -1,144 +1,116 @@
 import requests
-import time
 from datetime import datetime
 import pytz
 
-# ================= API =================
-
 API_KEY="f29c55ce7132437e86f7b025670ec8e4"
+
+# ================= PAIRS =================
 
 PAIRS=[
     "EUR/USD",
     "GBP/USD",
     "USD/JPY",
     "AUD/USD",
-    "GBP/CAD"
+    "USD/CAD",
+    "USD/CHF",
+    "EUR/JPY"
 ]
 
-LAST_SIGNAL_TIME=0
+last_signal_time={}
 
+# ================= GET MARKET DATA =================
 
-# ================= MARKET DATA =================
+def get_market_data(pair):
 
-def get_market(pair):
+    url=f"https://api.twelvedata.com/time_series?symbol={pair}&interval=1min&outputsize=60&apikey={API_KEY}"
 
-    url=f"https://api.twelvedata.com/time_series?symbol={pair}&interval=1min&outputsize=50&apikey={API_KEY}"
+    r=requests.get(url,timeout=10)
+    data=r.json()
 
-    r=requests.get(url).json()
-
-    if r.get("status")!="ok":
-        print("API ERROR:",r)
+    if "values" not in data:
         return None
 
-    closes=[float(x["close"]) for x in r["values"]]
+    closes=[float(c["close"]) for c in data["values"]]
 
     return closes
 
 
 # ================= RSI =================
 
-def calculate_rsi(prices,period=14):
+def calculate_rsi(closes,period=14):
 
     gains=[]
     losses=[]
 
-    for i in range(1,len(prices)):
-        diff=prices[i-1]-prices[i]
+    for i in range(1,period+1):
+        diff=closes[i]-closes[i-1]
 
         if diff>0:
             gains.append(diff)
         else:
             losses.append(abs(diff))
 
-    avg_gain=sum(gains[-period:])/period
-    avg_loss=sum(losses[-period:])/period
-
-    if avg_loss==0:
-        return 100
+    avg_gain=sum(gains)/period if gains else 0.0001
+    avg_loss=sum(losses)/period if losses else 0.0001
 
     rs=avg_gain/avg_loss
     rsi=100-(100/(1+rs))
 
-    return round(rsi,2)
+    return rsi
 
 
-# ================= SIGNAL ANALYSIS =================
+# ================= SIGNAL =================
 
-def analyze(pair):
+def generate_signal(pair,timeframe="1m"):
 
-    prices=get_market(pair)
+    now=datetime.now(pytz.timezone("Africa/Kigali"))
+    key=f"{pair}_{timeframe}"
 
-    if prices is None:
-        return "❌ Market Error"
+    # 1 signal per minute
+    if key in last_signal_time:
+        diff=(now-last_signal_time[key]).seconds
+        if diff<60:
+            return {
+                "status":"wait",
+                "message":"⏳ Tegereza next candle..."
+            }
 
-    price_now=prices[0]
-    price_prev=prices[1]
+    closes=get_market_data(pair)
 
-    rsi=calculate_rsi(prices)
+    if closes is None:
+        return {"status":"error","message":"API error"}
 
-    # direction
-    if rsi<30 and price_now>price_prev:
-        direction="CALL 📈"
-        strength="🔥 STRONG"
-    elif rsi>70 and price_now<price_prev:
-        direction="PUT 📉"
-        strength="🔥 STRONG"
-    elif price_now>price_prev:
-        direction="CALL 📈"
-        strength="⚠️ WEAK"
+    rsi=calculate_rsi(closes)
+
+    price=closes[0]
+
+    # ===== SIGNAL LOGIC =====
+
+    if rsi<30:
+        signal="CALL"
+        strength="🔥 STRONG BUY"
+
+    elif rsi>70:
+        signal="PUT"
+        strength="🔥 STRONG SELL"
+
+    elif 45<rsi<55:
+        return {
+            "status":"wait",
+            "message":"📊 Market iracyari hagati"
+        }
     else:
-        direction="PUT 📉"
-        strength="⚠️ WEAK"
+        signal="CALL" if rsi<50 else "PUT"
+        strength="⚡ NORMAL"
 
-    # Rwanda Time
-    rw_tz=pytz.timezone("Africa/Kigali")
-    now=datetime.now(rw_tz).strftime("%H:%M:%S")
+    last_signal_time[key]=now
 
-    signal=f"""
-🚨 ULTRA VIP SIGNAL
-
-PAIR: {pair}
-PRICE: {price_now}
-RSI: {rsi}
-
-DIRECTION: {direction}
-POWER: {strength}
-
-TIME RWANDA: {now}
-EXPIRY: 1 MIN
-"""
-
-    return signal
-
-
-# ================= AUTO ENGINE =================
-
-def generate_signal():
-
-    global LAST_SIGNAL_TIME
-
-    current=time.time()
-
-    # signal rimwe mumunota
-    if current-LAST_SIGNAL_TIME<60:
-        wait=int(60-(current-LAST_SIGNAL_TIME))
-        return f"⏳ Tegereza {wait}s mbere ya signal ikurikira"
-
-    pair=PAIRS[int(current)%len(PAIRS)]
-
-    signal=analyze(pair)
-
-    LAST_SIGNAL_TIME=current
-
-    return signal
-
-
-# ================= TEST RUN =================
-
-if __name__=="__main__":
-
-    while True:
-
-        print(generate_signal())
-
-        time.sleep(10)
+    return {
+        "status":"success",
+        "pair":pair,
+        "signal":signal,
+        "strength":strength,
+        "rsi":round(rsi,2),
+        "price":price,
+        "time":now.strftime("%H:%M:%S")
+    }
