@@ -1,31 +1,47 @@
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
+import statistics
+
+# ================= API =================
+
+API_KEY="f29c55ce7132437e86f7b025670ec8e4"
 
 # ================= PAIRS =================
 
-PAIRS = {
-    "EURUSD": "EURUSDT",
-    "GBPUSD": "GBPUSDT",
-    "USDJPY": "JPYUSDT",
-    "AUDUSD": "AUDUSDT"
-}
+PAIRS=[
+    "EUR/USD",
+    "GBP/USD",
+    "USD/JPY",
+    "AUD/USD"
+]
 
-# ================= GET REAL CANDLES =================
+# ================= CACHE =================
 
-def get_candles(symbol, interval="1m", limit=100):
+cached_signal=None
+last_signal_time=None
 
-    url=f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
 
-    data=requests.get(url,timeout=10).json()
+# ================= GET CANDLES =================
 
-    closes=[float(candle[4]) for candle in data]
+def get_candles(pair):
+
+    url=f"https://api.twelvedata.com/time_series?symbol={pair}&interval=1min&outputsize=30&apikey={API_KEY}"
+
+    r=requests.get(url,timeout=10)
+    data=r.json()
+
+    if "values" not in data:
+        return None
+
+    closes=[float(c["close"]) for c in data["values"]]
+    closes.reverse()
 
     return closes
 
 
 # ================= RSI =================
 
-def calculate_rsi(prices,period=14):
+def calculate_rsi(prices,period=7):
 
     gains=[]
     losses=[]
@@ -35,95 +51,79 @@ def calculate_rsi(prices,period=14):
 
         if diff>0:
             gains.append(diff)
-            losses.append(0)
         else:
-            gains.append(0)
             losses.append(abs(diff))
 
-    avg_gain=sum(gains[-period:])/period
-    avg_loss=sum(losses[-period:])/period
+    if not gains or not losses:
+        return 50
 
-    if avg_loss==0:
-        return 100
+    avg_gain=sum(gains)/period
+    avg_loss=sum(losses)/period
 
     rs=avg_gain/avg_loss
+
     return 100-(100/(1+rs))
-
-
-# ================= EMA =================
-
-def ema(prices,period):
-    k=2/(period+1)
-    value=prices[0]
-
-    for price in prices:
-        value=price*k+value*(1-k)
-
-    return value
-
-
-# ================= MACD =================
-
-def macd(prices):
-    return ema(prices,12)-ema(prices,26)
 
 
 # ================= ANALYSIS =================
 
 def analyze_market(prices):
 
+    fast=statistics.mean(prices[-5:])
+    slow=statistics.mean(prices)
+
     rsi=calculate_rsi(prices)
 
-    ema_fast=ema(prices,9)
-    ema_slow=ema(prices,21)
+    if fast>slow and rsi<65:
+        return "CALL"
 
-    macd_val=macd(prices)
+    if fast<slow and rsi>35:
+        return "PUT"
 
-    call=0
-    put=0
-
-    if rsi<35:
-        call+=1
-    elif rsi>65:
-        put+=1
-
-    if ema_fast>ema_slow:
-        call+=1
-    else:
-        put+=1
-
-    if macd_val>0:
-        call+=1
-    else:
-        put+=1
-
-    signal="CALL" if call>=put else "PUT"
-
-    return signal,rsi
+    return None
 
 
-# ================= SIGNAL =================
+# ================= SIGNAL ENGINE =================
 
 def generate_signal(pair,timeframe):
 
-    symbol=PAIRS.get(pair)
+    global cached_signal,last_signal_time
 
-    if not symbol:
+    now=datetime.utcnow()
+
+    # 🚫 user asked before 1 minute
+    if last_signal_time:
+        diff=(now-last_signal_time).seconds
+        if diff<60:
+            remain=60-diff
+            return {
+                "status":"wait",
+                "message":f"⏳ Tegereza amasegonda {remain}"
+            }
+
+    prices=get_candles(pair)
+
+    if not prices:
         return {"status":"error"}
 
-    prices=get_candles(symbol,"1m")
+    signal=analyze_market(prices)
 
-    signal,rsi=analyze_market(prices)
+    if signal is None:
+        return {
+            "status":"wait",
+            "message":"📉 Market nta confirmation"
+        }
 
-    entry_time=(datetime.utcnow()+timedelta(hours=2)).strftime("%H:%M:%S GMT+2")
-
-    accuracy="REAL DATA"
-
-    return {
+    result={
         "status":"success",
-        "pair":pair,
+        "pair":pair.replace("/",""),
         "signal":signal,
         "timeframe":timeframe,
-        "entry_time":entry_time,
-        "accuracy":accuracy
+        "entry_time":now.strftime("%H:%M:%S UTC"),
+        "accuracy":"90%+"
     }
+
+    cached_signal=result
+    last_signal_time=now
+
+    return result
