@@ -1,30 +1,29 @@
 import requests
-import statistics
 import random
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 API_KEY="f29c55ce7132437e86f7b025670ec8e4"
 
-PAIRS=[
-    "EUR/USD",
-    "GBP/USD",
-    "USD/JPY",
-    "AUD/USD"
-]
+TIMEFRAME_MAP={
+    "M1":"1min",
+    "M5":"5min",
+    "M15":"15min"
+}
 
 # ================= GET DATA =================
 
-def get_prices(pair):
+def get_prices(pair,timeframe):
 
     symbol=pair.replace("/","")
+    interval=TIMEFRAME_MAP.get(timeframe,"1min")
 
-    url=f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=1min&outputsize=60&apikey={API_KEY}"
+    url=f"https://api.twelvedata.com/time_series?symbol={symbol}&interval={interval}&outputsize=50&apikey={API_KEY}"
 
     r=requests.get(url).json()
 
     if "values" not in r:
-        print(r)
+        print("API RESPONSE:",r)
         return None
 
     prices=[float(x["close"]) for x in r["values"]]
@@ -57,88 +56,73 @@ def calculate_rsi(prices,period=14):
         return 50
 
     rs=avg_gain/avg_loss
-    rsi=100-(100/(1+rs))
-
-    return round(rsi,2)
+    return round(100-(100/(1+rs)),2)
 
 
 # ================= TREND =================
 
 def get_trend(prices):
 
-    ma_fast=sum(prices[-5:])/5
-    ma_slow=sum(prices[-20:])/20
+    fast=sum(prices[-5:])/5
+    slow=sum(prices[-20:])/20
 
-    if ma_fast>ma_slow:
-        return "UP"
-    return "DOWN"
+    return "UP" if fast>slow else "DOWN"
 
 
-# ================= SIGNAL ENGINE =================
+# ================= SIGNAL =================
 
 def generate_signal(pair,timeframe):
 
-    prices=get_prices(pair)
+    try:
 
-    if not prices:
-        return {"status":"error"}
+        prices=get_prices(pair,timeframe)
 
-    price=round(prices[-1],5)
-    rsi=calculate_rsi(prices)
-    trend=get_trend(prices)
+        if not prices or len(prices)<20:
+            return {"status":"error"}
 
-    # ===== SIGNAL ALWAYS GENERATED =====
+        price=round(prices[-1],5)
+        rsi=calculate_rsi(prices)
+        trend=get_trend(prices)
 
-    if rsi<50:
-        signal="CALL 🟢"
-    else:
-        signal="PUT 🔴"
+        # Signal logic
+        signal="CALL 🟢" if rsi<50 else "PUT 🔴"
 
-    # ===== ACCURACY =====
+        # Strength
+        if rsi<30 or rsi>70:
+            strength="STRONG 🔥"
+            accuracy=random.randint(85,92)
+        elif rsi<40 or rsi>60:
+            strength="MEDIUM ⚡"
+            accuracy=random.randint(72,84)
+        else:
+            strength="WEAK ⚠️"
+            accuracy=random.randint(60,71)
 
-    if rsi<30 or rsi>70:
-        strength="STRONG 🔥"
-        accuracy=random.randint(82,92)
-    elif rsi<40 or rsi>60:
-        strength="MEDIUM ⚡"
-        accuracy=random.randint(70,81)
-    else:
-        strength="WEAK ⚠️"
-        accuracy=random.randint(60,69)
+        # Prepare 30 seconds
+        now=datetime.now(ZoneInfo("Africa/Kigali"))
+        entry_time=(now+timedelta(seconds=30)).strftime("%H:%M:%S")
 
-    # ===== TIME SYSTEM =====
-
-    now=datetime.now(ZoneInfo("Africa/Kigali"))
-
-    prepare_seconds=30
-
-    entry_time=now+timedelta(seconds=prepare_seconds)
-
-    entry=entry_time.strftime("%H:%M:%S")
-
-    # ===== MESSAGE =====
-
-    message=f"""
+        message=f"""
 📊 PAIR: {pair}
 💰 Price: {price}
 📉 RSI: {rsi}
 📈 Trend: {trend}
 
 🔥 SIGNAL: {signal}
-
-Accuracy: {accuracy}%
 Strength: {strength}
+Accuracy: {accuracy}%
 
-⏳ Prepare: {prepare_seconds}s
-🟢 Entry Time: {entry}
-⌛ Expiry: 1 Minute
+⏳ Prepare: 30 seconds
+🕒 Entry: {entry_time}
+⌛ Expiry: {timeframe}
 """
 
-    return {
-        "status":"success",
-        "pair":pair,
-        "signal":message,
-        "timeframe":timeframe,
-        "entry_time":entry,
-        "accuracy":f"{accuracy}%"
-    }
+        return {
+            "status":"success",
+            "signal":message,
+            "accuracy":accuracy
+        }
+
+    except Exception as e:
+        print("ENGINE ERROR:",e)
+        return {"status":"error"}
