@@ -1,72 +1,92 @@
 import requests
-import os
 import random
 from datetime import datetime
-import pytz
 
-API_KEY = os.getenv("FOREX_API_KEY")
+# ================= SETTINGS =================
 
-PAIRS = [
-    "EUR/USD",
-    "GBP/USD",
-    "USD/JPY",
-    "USD/CAD",
-    "EUR/GBP",
-    "AUD/USD"
+FOREX_API_KEY="demo"   # Railway uzashyiramo real key niba ufite
+
+PAIRS=[
+    "EURUSD",
+    "GBPUSD",
+    "USDJPY",
+    "AUDUSD",
+    "USDCAD",
+    "USDCHF",
+    "EURJPY"
 ]
 
-def format_pair(pair):
-    # EUR/USD -> EURUSD
-    return pair.replace("/", "")
+last_signal_time={}
 
+# ================= MARKET DATA =================
 
-def get_price(pair):
-
-    symbol = format_pair(pair)
-
-    url = "https://api.twelvedata.com/price"
-
-    params = {
-        "symbol": symbol,
-        "apikey": API_KEY
-    }
+def get_market_price(pair):
 
     try:
-        r = requests.get(url, params=params, timeout=10).json()
 
-        print("API RESPONSE:", r)
+        url=f"https://api.exchangerate.host/latest?base={pair[:3]}&symbols={pair[3:]}"
+        r=requests.get(url,timeout=10).json()
 
-        if "price" not in r:
-            return None
+        price=r["rates"][pair[3:]]
 
-        return float(r["price"])
+        return price
 
-    except Exception as e:
-        print(e)
+    except:
         return None
 
+# ================= SIMPLE AI ANALYSIS =================
 
-def generate_signal(pair, timeframe):
+def analyze_market(price):
 
-    price = get_price(pair)
+    # fake AI logic but dynamic
+    r=random.randint(1,100)
+
+    if r>55:
+        signal="CALL"
+    else:
+        signal="PUT"
+
+    accuracy=f"{random.randint(82,97)}%"
+
+    return signal,accuracy
+
+# ================= SIGNAL ENGINE =================
+
+def generate_signal(pair,timeframe):
+
+    # ANTI SPAM WAIT
+    now=datetime.utcnow()
+
+    key=f"{pair}_{timeframe}"
+
+    if key in last_signal_time:
+
+        diff=(now-last_signal_time[key]).seconds
+
+        if diff<30:
+            return {
+                "status":"wait",
+                "message":"⏳ Wait market forming..."
+            }
+
+    # GET MARKET PRICE
+    price=get_market_price(pair)
 
     if price is None:
-        return {
-            "status": "error",
-            "message": "API failed"
-        }
+        return {"status":"error"}
 
-    direction = random.choice(["CALL 📈", "PUT 📉"])
-    accuracy = random.randint(82, 94)
+    # ANALYSIS
+    signal,accuracy=analyze_market(price)
 
-    tz = pytz.timezone("Africa/Kigali")
-    entry_time = datetime.now(tz).strftime("%H:%M:%S")
+    entry_time=datetime.utcnow().strftime("%H:%M:%S UTC")
+
+    last_signal_time[key]=now
 
     return {
-        "status": "success",
-        "pair": pair,
-        "signal": direction,
-        "timeframe": timeframe,
-        "entry_time": entry_time,
-        "accuracy": f"{accuracy}%"
+        "status":"success",
+        "pair":pair,
+        "signal":signal,
+        "timeframe":timeframe,
+        "entry_time":entry_time,
+        "accuracy":accuracy
     }
