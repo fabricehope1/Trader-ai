@@ -146,22 +146,17 @@ def messages(msg):
 
         timeframe=text
 
-        result=generate_signal(pair,timeframe)
-
-        # SUCCESS
         if result.get("status")=="success":
+    bot.send_message(
+        msg.chat.id,
+        result["message"]
+    )
 
-            message=f"""
-📊 AI SIGNAL
+elif result.get("status")=="wait":
+    bot.send_message(msg.chat.id,result["message"])
 
-Pair: {result['pair']}
-Signal: {result['signal']}
-Timeframe: {result['timeframe']}
-Entry Time: {result['entry_time']}
-Accuracy: {result['accuracy']}
-"""
-
-            bot.send_message(msg.chat.id,message)
+else:
+    bot.send_message(msg.chat.id,"⚠️ Signal error")
 
         # WAIT
         elif result.get("status")=="wait":
