@@ -5,29 +5,37 @@ from zoneinfo import ZoneInfo
 
 API_KEY="f29c55ce7132437e86f7b025670ec8e4"
 
+# ===== CORRECT PAIRS =====
 PAIRS=[
-    "EUR/USD",
-    "GBP/USD",
-    "USD/JPY",
-    "AUD/USD"
+    "EURUSD",
+    "GBPUSD",
+    "USDJPY",
+    "AUDUSD"
 ]
 
-# ================= GET DATA =================
+# ================= GET MARKET DATA =================
 
 def get_prices(pair):
 
-    url=f"https://api.twelvedata.com/time_series?symbol={pair}&interval=1min&outputsize=30&apikey={API_KEY}"
+    url=f"https://api.twelvedata.com/time_series?symbol={pair}&interval=1min&outputsize=50&apikey={API_KEY}"
 
-    r=requests.get(url).json()
+    try:
+        r=requests.get(url,timeout=10).json()
 
-    if "values" not in r:
-        print("API ERROR:",r)
+        if "values" not in r:
+            print("API ERROR:",r)
+            return None,None
+
+        prices=[float(c["close"]) for c in reversed(r["values"])]
+
+        if len(prices)<20:
+            return None,None
+
+        return prices,prices[-1]
+
+    except Exception as e:
+        print("REQUEST ERROR:",e)
         return None,None
-
-    prices=[float(c["close"]) for c in reversed(r["values"])]
-    current_price=prices[-1]
-
-    return prices,current_price
 
 
 # ================= RSI =================
@@ -40,12 +48,8 @@ def calculate_rsi(prices,period=14):
     for i in range(1,len(prices)):
         diff=prices[i]-prices[i-1]
 
-        if diff>0:
-            gains.append(diff)
-            losses.append(0)
-        else:
-            gains.append(0)
-            losses.append(abs(diff))
+        gains.append(max(diff,0))
+        losses.append(abs(min(diff,0)))
 
     avg_gain=statistics.mean(gains[-period:])
     avg_loss=statistics.mean(losses[-period:])
@@ -54,21 +58,19 @@ def calculate_rsi(prices,period=14):
         return 100
 
     rs=avg_gain/avg_loss
-    rsi=100-(100/(1+rs))
-
-    return round(rsi,2)
+    return round(100-(100/(1+rs)),2)
 
 
-# ================= SIMPLE MARKET ANALYSIS =================
+# ================= MARKET ANALYSIS =================
 
 def analyze_market(prices):
 
     rsi=calculate_rsi(prices)
 
     fast_ma=statistics.mean(prices[-5:])
-    slow_ma=statistics.mean(prices[-15:])
+    slow_ma=statistics.mean(prices[-20:])
 
-    last_move=prices[-1]-prices[-2]
+    momentum=prices[-1]-prices[-3]
 
     score=0
 
@@ -79,36 +81,42 @@ def analyze_market(prices):
         score-=1
 
     # MOMENTUM
-    if last_move>0:
+    if momentum>0:
         score+=1
     else:
         score-=1
 
-    # RSI FILTER
-    if rsi<30:
+    # RSI CONFIRMATION
+    if rsi<35:
         score+=1
-    elif rsi>70:
+    elif rsi>65:
         score-=1
 
-    # DECISION (ntijya iceceka)
-    if score>=0:
-        direction="CALL"
-        confidence=80
-    else:
-        direction="PUT"
-        confidence=80
+    # ===== FINAL DECISION =====
+    direction="CALL" if score>=0 else "PUT"
+
+    confidence=70+abs(score)*10
 
     return direction,confidence,rsi
 
 
-# ================= SIGNAL =================
+# ================= SIGNAL GENERATOR =================
 
 def generate_signal(pair):
 
     prices,current_price=get_prices(pair)
 
-    if not prices:
-        return None
+    # NEVER SILENT
+    if prices is None:
+        return {
+            "pair":pair,
+            "direction":"WAIT",
+            "confidence":0,
+            "expiry":"--",
+            "time":"NO DATA",
+            "rsi":0,
+            "price":0
+        }
 
     direction,confidence,rsi=analyze_market(prices)
 
