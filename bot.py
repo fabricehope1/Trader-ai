@@ -257,7 +257,7 @@ Accuracy: {result['accuracy']}
         waiting_payment.pop(msg.chat.id)
         return
 
-# ================= BROADCAST SEND =================
+# ================= BROADCAST SEND (PRO) =================
 
     if msg.chat.id in waiting_broadcast:
 
@@ -265,15 +265,19 @@ Accuracy: {result['accuracy']}
 
         for user in users:
             try:
-                if msg.content_type=="text":
-                    bot.send_message(user,msg.text)
-                else:
-                    bot.send_photo(user,msg.photo[-1].file_id,caption=msg.caption)
+                bot.copy_message(
+                    chat_id=user,
+                    from_chat_id=msg.chat.id,
+                    message_id=msg.message_id
+                )
                 sent+=1
             except:
                 pass
 
-        bot.send_message(msg.chat.id,f"✅ Broadcast sent to {sent} users")
+        bot.send_message(
+            msg.chat.id,
+            f"✅ Broadcast sent to {sent} users"
+        )
 
         waiting_broadcast.pop(msg.chat.id)
         main_menu(msg.chat.id)
