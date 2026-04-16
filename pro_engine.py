@@ -1,70 +1,54 @@
 import requests
-from datetime import datetime,timedelta
-import statistics
+import time
+from datetime import datetime
+import pytz
+
+# ================= API =================
 
 API_KEY="f29c55ce7132437e86f7b025670ec8e4"
 
 PAIRS=[
-"EURUSD","GBPUSD","USDJPY",
-"AUDUSD","USDCAD","USDCHF","EURJPY"
+    "EUR/USD",
+    "GBP/USD",
+    "USD/JPY",
+    "AUD/USD",
+    "GBP/CAD"
 ]
 
-last_signal={}
+LAST_SIGNAL_TIME=0
 
-# ================= RWANDA TIME =================
 
-def rwanda_time():
-    return (datetime.utcnow()+timedelta(hours=2)).strftime("%H:%M:%S")
+# ================= MARKET DATA =================
 
-# ================= SAFE API REQUEST =================
+def get_market(pair):
 
-def get_candles(pair):
+    url=f"https://api.twelvedata.com/time_series?symbol={pair}&interval=1min&outputsize=50&apikey={API_KEY}"
 
-    try:
+    r=requests.get(url).json()
 
-        url=f"https://api.twelvedata.com/time_series"
-
-        params={
-            "symbol":pair,
-            "interval":"1min",
-            "outputsize":50,
-            "apikey":API_KEY
-        }
-
-        r=requests.get(url,params=params,timeout=10)
-        data=r.json()
-
-        # ===== API ERROR CHECK =====
-        if "values" not in data:
-            print("API RESPONSE:",data)
-            return None
-
-        closes=[float(c["close"]) for c in data["values"]]
-        closes.reverse()
-
-        return closes
-
-    except Exception as e:
-        print("DATA ERROR:",e)
+    if r.get("status")!="ok":
+        print("API ERROR:",r)
         return None
+
+    closes=[float(x["close"]) for x in r["values"]]
+
+    return closes
+
 
 # ================= RSI =================
 
-def calc_rsi(closes,period=14):
+def calculate_rsi(prices,period=14):
 
     gains=[]
     losses=[]
 
-    for i in range(1,len(closes)):
-        diff=closes[i]-closes[i-1]
+    for i in range(1,len(prices)):
+        diff=prices[i-1]-prices[i]
 
         if diff>0:
             gains.append(diff)
         else:
             losses.append(abs(diff))
-
-    if len(gains)<period:
-        return None
 
     avg_gain=sum(gains[-period:])/period
     avg_loss=sum(losses[-period:])/period
@@ -73,99 +57,88 @@ def calc_rsi(closes,period=14):
         return 100
 
     rs=avg_gain/avg_loss
-    return round(100-(100/(1+rs)),2)
+    rsi=100-(100/(1+rs))
 
-# ================= TREND =================
+    return round(rsi,2)
 
-def trend(closes):
 
-    fast=sum(closes[-5:])/5
-    slow=sum(closes[-20:])/20
+# ================= SIGNAL ANALYSIS =================
 
-    if fast>slow:
-        return "UP"
-    elif fast<slow:
-        return "DOWN"
-    return "SIDE"
+def analyze(pair):
 
-# ================= SIGNAL ENGINE =================
+    prices=get_market(pair)
 
-def generate_signal(pair,timeframe):
+    if prices is None:
+        return "❌ Market Error"
 
-    try:
+    price_now=prices[0]
+    price_prev=prices[1]
 
-        now=datetime.utcnow()
-        key=f"{pair}_{timeframe}"
+    rsi=calculate_rsi(prices)
 
-        # ===== ONE SIGNAL PER MINUTE =====
-        if key in last_signal:
-            diff=(now-last_signal[key]).seconds
-            if diff<60:
-                return {
-                    "status":"wait",
-                    "message":"⏳ Tegereza minute 1"
-                }
+    # direction
+    if rsi<30 and price_now>price_prev:
+        direction="CALL 📈"
+        strength="🔥 STRONG"
+    elif rsi>70 and price_now<price_prev:
+        direction="PUT 📉"
+        strength="🔥 STRONG"
+    elif price_now>price_prev:
+        direction="CALL 📈"
+        strength="⚠️ WEAK"
+    else:
+        direction="PUT 📉"
+        strength="⚠️ WEAK"
 
-        closes=get_candles(pair)
+    # Rwanda Time
+    rw_tz=pytz.timezone("Africa/Kigali")
+    now=datetime.now(rw_tz).strftime("%H:%M:%S")
 
-        if closes is None:
-            return {
-                "status":"error",
-                "message":"Market data unavailable"
-            }
+    signal=f"""
+🚨 ULTRA VIP SIGNAL
 
-        price=closes[-1]
-        rsi=calc_rsi(closes)
-        tr=trend(closes)
+PAIR: {pair}
+PRICE: {price_now}
+RSI: {rsi}
 
-        if rsi is None:
-            return {
-                "status":"wait",
-                "message":"Market loading..."
-            }
+DIRECTION: {direction}
+POWER: {strength}
 
-        signal=None
-        strength="WEAK"
+TIME RWANDA: {now}
+EXPIRY: 1 MIN
+"""
 
-        # ===== REAL LOGIC =====
-        if rsi<30 and tr=="UP":
-            signal="CALL"
-            strength="🔥 STRONG"
+    return signal
 
-        elif rsi>70 and tr=="DOWN":
-            signal="PUT"
-            strength="🔥 STRONG"
 
-        elif rsi<40:
-            signal="CALL"
+# ================= AUTO ENGINE =================
 
-        elif rsi>60:
-            signal="PUT"
+def generate_signal():
 
-        if signal is None:
-            return {
-                "status":"wait",
-                "message":"No clean setup"
-            }
+    global LAST_SIGNAL_TIME
 
-        last_signal[key]=now
+    current=time.time()
 
-        entry=(datetime.utcnow()+timedelta(seconds=30)+timedelta(hours=2)).strftime("%H:%M:%S")
+    # signal rimwe mumunota
+    if current-LAST_SIGNAL_TIME<60:
+        wait=int(60-(current-LAST_SIGNAL_TIME))
+        return f"⏳ Tegereza {wait}s mbere ya signal ikurikira"
 
-        return {
-            "status":"prepare",
-            "pair":pair,
-            "direction":signal,
-            "strength":strength,
-            "rsi":rsi,
-            "price":price,
-            "entry_time":entry,
-            "time":rwanda_time()
-        }
+    pair=PAIRS[int(current)%len(PAIRS)]
 
-    except Exception as e:
-        print("ENGINE ERROR:",e)
-        return {
-            "status":"error",
-            "message":"Engine crashed"
-        }
+    signal=analyze(pair)
+
+    LAST_SIGNAL_TIME=current
+
+    return signal
+
+
+# ================= TEST RUN =================
+
+if __name__=="__main__":
+
+    while True:
+
+        print(generate_signal())
+
+        time.sleep(10)
