@@ -1,129 +1,138 @@
 import requests
-from datetime import datetime
+from datetime import datetime,timedelta
 import statistics
-
-# ================= API =================
 
 API_KEY="f29c55ce7132437e86f7b025670ec8e4"
 
-# ================= PAIRS =================
-
 PAIRS=[
-    "EUR/USD",
-    "GBP/USD",
-    "USD/JPY",
-    "AUD/USD"
+"EURUSD","GBPUSD","USDJPY",
+"AUDUSD","USDCAD","USDCHF","EURJPY"
 ]
 
-# ================= CACHE =================
+last_analysis={}
 
-cached_signal=None
-last_signal_time=None
+# ================= RWANDA TIME =================
 
+def rwanda_time():
+    return (datetime.utcnow()+timedelta(hours=2)).strftime("%H:%M:%S")
 
-# ================= GET CANDLES =================
+# ================= GET DATA =================
 
 def get_candles(pair):
 
-    url=f"https://api.twelvedata.com/time_series?symbol={pair}&interval=1min&outputsize=30&apikey={API_KEY}"
+    try:
+        url=f"https://api.twelvedata.com/time_series?symbol={pair}&interval=1min&outputsize=60&apikey={API_KEY}"
+        data=requests.get(url,timeout=10).json()
 
-    r=requests.get(url,timeout=10)
-    data=r.json()
+        closes=[float(x["close"]) for x in data["values"]]
+        closes.reverse()
 
-    if "values" not in data:
+        return closes
+
+    except:
         return None
-
-    closes=[float(c["close"]) for c in data["values"]]
-    closes.reverse()
-
-    return closes
-
 
 # ================= RSI =================
 
-def calculate_rsi(prices,period=7):
+def rsi_calc(closes,period=14):
 
     gains=[]
     losses=[]
 
-    for i in range(1,len(prices)):
-        diff=prices[i]-prices[i-1]
+    for i in range(1,len(closes)):
+        diff=closes[i]-closes[i-1]
 
         if diff>0:
             gains.append(diff)
         else:
             losses.append(abs(diff))
 
-    if not gains or not losses:
-        return 50
+    if len(gains)<period:
+        return None
 
-    avg_gain=sum(gains)/period
-    avg_loss=sum(losses)/period
+    avg_gain=statistics.mean(gains[-period:])
+    avg_loss=statistics.mean(losses[-period:])
+
+    if avg_loss==0:
+        return 100
 
     rs=avg_gain/avg_loss
+    return round(100-(100/(1+rs)),2)
 
-    return 100-(100/(1+rs))
+# ================= TREND =================
 
+def trend(closes):
 
-# ================= ANALYSIS =================
+    fast=sum(closes[-5:])/5
+    slow=sum(closes[-20:])/20
 
-def analyze_market(prices):
+    if fast>slow:
+        return "UP"
+    elif fast<slow:
+        return "DOWN"
+    return "SIDE"
 
-    fast=statistics.mean(prices[-5:])
-    slow=statistics.mean(prices)
-
-    rsi=calculate_rsi(prices)
-
-    if fast>slow and rsi<65:
-        return "CALL"
-
-    if fast<slow and rsi>35:
-        return "PUT"
-
-    return None
-
-
-# ================= SIGNAL ENGINE =================
+# ================= ANALYSIS ENGINE =================
 
 def generate_signal(pair,timeframe):
 
-    global cached_signal,last_signal_time
-
     now=datetime.utcnow()
+    key=f"{pair}_{timeframe}"
 
-    # 🚫 user asked before 1 minute
-    if last_signal_time:
-        diff=(now-last_signal_time).seconds
-        if diff<60:
-            remain=60-diff
+    # ===== Anti Spam 1 minute =====
+    if key in last_analysis:
+        if (now-last_analysis[key]).seconds<60:
             return {
                 "status":"wait",
-                "message":f"⏳ Tegereza amasegonda {remain}"
+                "message":"⏳ Market iracyategurwa..."
             }
 
-    prices=get_candles(pair)
+    closes=get_candles(pair)
 
-    if not prices:
+    if not closes:
         return {"status":"error"}
 
-    signal=analyze_market(prices)
+    price=closes[-1]
+    rsi=rsi_calc(closes)
+    tr=trend(closes)
+
+    if rsi is None:
+        return {"status":"wait","message":"Loading market..."}
+
+    signal=None
+    strength="WEAK"
+
+    # ===== SMART ENTRY LOGIC =====
+    if rsi<30 and tr=="UP":
+        signal="CALL"
+        strength="🔥 STRONG"
+
+    elif rsi>70 and tr=="DOWN":
+        signal="PUT"
+        strength="🔥 STRONG"
+
+    elif rsi<40:
+        signal="CALL"
+
+    elif rsi>60:
+        signal="PUT"
 
     if signal is None:
-        return {
-            "status":"wait",
-            "message":"📉 Market nta confirmation"
-        }
+        return {"status":"wait","message":"No clean setup"}
 
-    result={
-        "status":"success",
-        "pair":pair.replace("/",""),
-        "signal":signal,
-        "timeframe":timeframe,
-        "entry_time":now.strftime("%H:%M:%S UTC"),
-        "accuracy":"90%+"
+    last_analysis[key]=now
+
+    # ===== PREPARATION TIME =====
+    entry_time=(datetime.utcnow()+timedelta(seconds=30))
+
+    return {
+        "status":"prepare",
+        "pair":pair,
+        "direction":signal,
+        "strength":strength,
+        "price":price,
+        "rsi":rsi,
+        "analysis_time":rwanda_time(),
+        "entry_at":(entry_time+timedelta(hours=2)).strftime("%H:%M:%S"),
+        "message":"⚡ Market Ready — Tegereza entry time"
     }
-
-    cached_signal=result
-    last_signal_time=now
-
-    return result
