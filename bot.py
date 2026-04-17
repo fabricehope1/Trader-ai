@@ -5,7 +5,7 @@ import os
 import threading
 import time
 from telebot.types import ReplyKeyboardMarkup
-from pro_engine import generate_signal, PAIRS, get_prices
+from pro_engine import generate_signal, PAIRS
 
 TOKEN=os.getenv("BOT_TOKEN")
 ADMIN_ID=8448217655
