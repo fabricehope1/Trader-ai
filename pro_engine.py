@@ -1,6 +1,6 @@
 import requests
 import statistics
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 # ================= SETTINGS =================
@@ -35,8 +35,7 @@ def get_prices(pair,timeframe):
         return None
 
     closes=[float(c["close"]) for c in r["values"]]
-
-    closes.reverse()  # important for calculation order
+    closes.reverse()
 
     return closes
 
@@ -80,6 +79,28 @@ def get_trend(prices):
     return "UP" if sma_fast>sma_slow else "DOWN"
 
 
+# ================= ENTRY SYSTEM =================
+
+def get_entry_time(timeframe):
+
+    now=datetime.now(ZoneInfo("Africa/Kigali"))
+
+    if timeframe=="M1":
+        next_candle=now.replace(second=0,microsecond=0)+timedelta(minutes=1)
+
+    elif timeframe=="M5":
+        minute=(now.minute//5+1)*5
+        next_candle=now.replace(minute=0,second=0,microsecond=0)+timedelta(minutes=minute)
+
+    elif timeframe=="M15":
+        minute=(now.minute//15+1)*15
+        next_candle=now.replace(minute=0,second=0,microsecond=0)+timedelta(minutes=minute)
+
+    prepare_seconds=int((next_candle-now).total_seconds())
+
+    return next_candle.strftime("%H:%M:%S"),prepare_seconds
+
+
 # ================= SMART SIGNAL ENGINE =================
 
 def generate_signal(pair,timeframe):
@@ -96,7 +117,7 @@ def generate_signal(pair,timeframe):
         rsi=calculate_rsi(prices)
         trend=get_trend(prices)
 
-        # ================= SMART LOGIC =================
+        # ================= SIGNAL LOGIC =================
 
         if rsi<=35:
             signal="CALL 📈"
@@ -105,15 +126,12 @@ def generate_signal(pair,timeframe):
             signal="PUT 📉"
 
         else:
-            # fallback trend signal (always gives signal)
             signal="CALL 📈" if trend=="UP" else "PUT 📉"
 
-        # ================= RWANDA TIME =================
+        # ================= ENTRY TIME =================
 
-        now=datetime.now(ZoneInfo("Africa/Kigali"))
-        entry_time=now.strftime("%H:%M")
+        entry_time,prepare=get_entry_time(timeframe)
 
-        # realistic accuracy calculation
         accuracy=f"{round(78+abs(50-rsi)/3,1)}%"
 
         return {
@@ -125,7 +143,8 @@ def generate_signal(pair,timeframe):
 📉 RSI: {rsi}
 📈 Trend: {trend}
 
-⏱ Entry Time: {entry_time}
+⏳ Prepare: {prepare}s
+⏱ Enter At: {entry_time}
 
 🔥 SIGNAL: {signal}
 """,
