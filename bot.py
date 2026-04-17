@@ -64,18 +64,34 @@ def start(msg):
     save_json("users.json",users)
     main_menu(msg.chat.id)
 
-# ================= AUTO WIN TRACKER =================
+# ================= TIMEFRAME SECONDS =================
 
-def auto_track(chat_id,pair,signal,entry_price,timeframe):
+def tf_seconds(tf):
+    return 60 if tf=="M1" else 300 if tf=="M5" else 900
 
-    time.sleep(70 if timeframe=="M1" else 310 if timeframe=="M5" else 910)
+# ================= ULTRA AUTO TRACKER =================
+
+def auto_track(chat_id,pair,signal,entry_price,timeframe,prepare):
+
+    # wait prepare + candle close
+    wait_time = prepare + tf_seconds(timeframe) + 5
+    time.sleep(wait_time)
+
+    # user skipped?
+    if chat_id not in active_signals:
+        return
 
     prices=get_prices(pair,timeframe)
-
     if not prices:
         return
 
     close_price=prices[-1]
+
+    move=abs(close_price-entry_price)
+
+    # noise filter
+    if move < 0.00005:
+        return
 
     result="LOSS"
 
@@ -92,11 +108,13 @@ def auto_track(chat_id,pair,signal,entry_price,timeframe):
 
     save_json("stats.json",stats)
 
+    active_signals.pop(chat_id,None)
+
     bot.send_message(chat_id,f"📊 RESULT: {result}")
 
     bot.send_message(
         ADMIN_ID,
-        f"""📈 AUTO TRACKER
+f"""📈 AUTO TRACKER
 
 User: {chat_id}
 Pair: {pair}
@@ -209,12 +227,13 @@ Accuracy: {result['accuracy']}
             bot.send_message(msg.chat.id,message,reply_markup=kb)
 
             entry_price=float(result["signal"].split("Price: ")[1].split("\n")[0])
+            prepare=int(result["signal"].split("Prepare: ")[1].split("s")[0])
 
             active_signals[msg.chat.id]=True
 
             threading.Thread(
                 target=auto_track,
-                args=(msg.chat.id,pair,result["signal"],entry_price,text)
+                args=(msg.chat.id,pair,result["signal"],entry_price,text,prepare)
             ).start()
 
         else:
@@ -252,7 +271,7 @@ Accuracy: {result['accuracy']}
 
         bot.send_message(
             msg.chat.id,
-            f"""
+f"""
 📊 BOT STATS
 
 Total Users: {total}
@@ -350,8 +369,4 @@ LOSS: {stats['loss']}
 
 # ================= START BOT =================
 
-bot.infinity_polling(
-    timeout=60,
-    long_polling_timeout=60,
-    skip_pending=True
-    )
+bot.infinity_polling(timeout=60,long_polling_timeout=60,skip_pending=True)
