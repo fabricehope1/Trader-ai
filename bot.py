@@ -1,4 +1,4 @@
-from auto_tracker import start_trackeri mport telebot
+from auto_tracker import start_tracker import telebot
 import json
 import os
 import threading
