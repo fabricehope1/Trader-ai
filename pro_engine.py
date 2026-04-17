@@ -1,7 +1,10 @@
+# ================= PRO ENGINE V6 AI =================
+
 import requests
 import statistics
 import json
-from datetime import datetime, timedelta
+import os
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 API_KEY="f29c55ce7132437e86f7b025670ec8e4"
@@ -13,32 +16,59 @@ PAIRS=[
     "AUD/USD"
 ]
 
-TIMEFRAME_MAP={
-    "M1":"1min",
-    "M5":"5min",
-    "M15":"15min"
-}
+TIMEFRAME="1min"
 
 AI_FILE="ai_memory.json"
+
 
 # ================= AI MEMORY =================
 
 def load_ai():
-    try:
-        return json.load(open(AI_FILE))
-    except:
-        return {}
+    if not os.path.exists(AI_FILE):
+        return {"buy":1,"sell":1}
+    return json.load(open(AI_FILE))
+
 
 def save_ai(data):
     json.dump(data,open(AI_FILE,"w"))
 
-# ================= DATA =================
 
-def get_prices(pair,timeframe):
+def ai_bias():
+    ai=load_ai()
+    total=ai["buy"]+ai["sell"]
 
-    tf=TIMEFRAME_MAP[timeframe]
+    buy_ratio=ai["buy"]/total
+    sell_ratio=ai["sell"]/total
 
-    url=f"https://api.twelvedata.com/time_series?symbol={pair}&interval={tf}&outputsize=60&apikey={API_KEY}"
+    return buy_ratio - sell_ratio
+
+
+def ai_learn(signal,result):
+
+    ai=load_ai()
+
+    if result=="WIN":
+        if signal=="BUY":
+            ai["buy"]+=1
+        else:
+            ai["sell"]+=1
+
+    else:
+        if signal=="BUY":
+            ai["sell"]+=1
+        else:
+            ai["buy"]+=1
+
+    save_ai(ai)
+
+
+# ================= GET CANDLES =================
+
+def get_candles(pair):
+
+    symbol=pair.replace("/","")
+
+    url=f"https://api.twelvedata.com/time_series?symbol={symbol}&interval={TIMEFRAME}&outputsize=50&apikey={API_KEY}"
 
     r=requests.get(url).json()
 
@@ -46,170 +76,75 @@ def get_prices(pair,timeframe):
         return None
 
     closes=[float(c["close"]) for c in r["values"]]
-    closes.reverse()
-    return closes
 
-# ================= RSI =================
+    return closes[::-1]
 
-def calculate_rsi(prices,period=14):
 
-    gains=[]
-    losses=[]
+# ================= ANALYSIS =================
 
-    for i in range(1,len(prices)):
-        diff=prices[i]-prices[i-1]
+def analyze(closes):
 
-        if diff>0:
-            gains.append(diff)
-            losses.append(0)
-        else:
-            gains.append(0)
-            losses.append(abs(diff))
+    sma_fast=statistics.mean(closes[-5:])
+    sma_slow=statistics.mean(closes[-15:])
 
-    avg_gain=sum(gains[-period:])/period
-    avg_loss=sum(losses[-period:])/period
+    momentum=closes[-1]-closes[-5]
 
-    if avg_loss==0:
-        return 100
+    rsi_like=(closes[-1]-min(closes[-14:]))/(max(closes[-14:])-min(closes[-14:]))
 
-    rs=avg_gain/avg_loss
-    return round(100-(100/(1+rs)),2)
+    score=0
 
-# ================= TREND =================
-
-def get_trend(prices):
-
-    sma_fast=statistics.mean(prices[-10:])
-    sma_slow=statistics.mean(prices[-30:])
-
-    return "UP" if sma_fast>sma_slow else "DOWN"
-
-# ================= STRENGTH =================
-
-def candle_strength(prices):
-
-    moves=[abs(prices[i]-prices[i-1]) for i in range(-6,-1)]
-
-    avg_move=sum(moves)/len(moves)
-    last_move=abs(prices[-1]-prices[-2])
-
-    if last_move>avg_move*1.8:
-        return "STRONG"
-    elif last_move>avg_move*1.2:
-        return "MEDIUM"
+    if sma_fast>sma_slow:
+        score+=1
     else:
-        return "WEAK"
+        score-=1
 
-# ================= ENTRY TIME =================
-
-def get_entry_time(timeframe):
-
-    now=datetime.now(ZoneInfo("Africa/Kigali"))
-
-    if timeframe=="M1":
-        next_candle=now.replace(second=0,microsecond=0)+timedelta(minutes=1)
-
-    elif timeframe=="M5":
-        minute=(now.minute//5+1)*5
-        next_candle=now.replace(minute=0,second=0,microsecond=0)+timedelta(minutes=minute)
-
+    if momentum>0:
+        score+=1
     else:
-        minute=(now.minute//15+1)*15
-        next_candle=now.replace(minute=0,second=0,microsecond=0)+timedelta(minutes=minute)
+        score-=1
 
-    prepare=int((next_candle-now).total_seconds())
+    if rsi_like>0.55:
+        score+=1
+    elif rsi_like<0.45:
+        score-=1
 
-    return next_candle.strftime("%H:%M:%S"),prepare
+    # ===== AI Bias =====
+    score+=ai_bias()
 
-# ================= AI LEARNING =================
-
-def ai_score(pair,rsi,trend,strength):
-
-    ai=load_ai()
-
-    key=f"{pair}_{trend}_{strength}"
-
-    if key not in ai:
-        return 0
-
-    data=ai[key]
-
-    total=data["win"]+data["loss"]
-
-    if total<5:
-        return 0
-
-    return (data["win"]-data["loss"])/total
-
-# ================= SIGNAL =================
-
-def generate_signal(pair,timeframe):
-
-    prices=get_prices(pair,timeframe)
-
-    if not prices:
-        return {"status":"error"}
-
-    price=round(prices[-1],5)
-
-    rsi=calculate_rsi(prices)
-    trend=get_trend(prices)
-    strength=candle_strength(prices)
-
-    # base signal
-    if rsi<=35:
-        signal="CALL 📈"
-    elif rsi>=65:
-        signal="PUT 📉"
+    if score>1:
+        signal="BUY"
+    elif score<-1:
+        signal="SELL"
     else:
-        signal="CALL 📈" if trend=="UP" else "PUT 📉"
+        signal="BUY" if score>=0 else "SELL"
 
-    # AI correction
-    score=ai_score(pair,rsi,trend,strength)
+    strength="WEAK"
 
-    if score<-0.3:
-        signal="PUT 📉" if "CALL" in signal else "CALL 📈"
+    if abs(score)>=2:
+        strength="STRONG"
+    elif abs(score)>=1:
+        strength="MEDIUM"
 
-    entry_time,prepare=get_entry_time(timeframe)
+    return signal,strength,round(score,2)
 
-    accuracy=round(78+abs(50-rsi)/3+score*10,1)
+
+# ================= MAIN SIGNAL =================
+
+def generate_signal(pair):
+
+    closes=get_candles(pair)
+
+    if not closes:
+        return None
+
+    signal,strength,score=analyze(closes)
+
+    now=datetime.now(ZoneInfo("Africa/Kigali")).strftime("%H:%M:%S")
 
     return {
-        "status":"success",
         "pair":pair,
-        "signal":f"""
-📊 PAIR: {pair}
-💰 Price: {price}
-📉 RSI: {rsi}
-📈 Trend: {trend}
-⚡ Strength: {strength}
-
-🧠 AI Score: {round(score,2)}
-
-⏳ Prepare: {prepare}s
-⏱ Enter At: {entry_time}
-
-🔥 SIGNAL: {signal}
-""",
-        "timeframe":timeframe,
-        "entry_time":entry_time,
-        "accuracy":f"{accuracy}%"
+        "signal":signal,
+        "strength":strength,
+        "score":score,
+        "time":now
     }
-
-# ================= AI UPDATE =================
-
-def update_ai(pair,trend,strength,result):
-
-    ai=load_ai()
-
-    key=f"{pair}_{trend}_{strength}"
-
-    if key not in ai:
-        ai[key]={"win":0,"loss":0}
-
-    if result=="WIN":
-        ai[key]["win"]+=1
-    else:
-        ai[key]["loss"]+=1
-
-    save_ai(ai)
