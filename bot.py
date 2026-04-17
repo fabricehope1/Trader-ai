@@ -1,13 +1,12 @@
 import telebot
 import json
-from auto_tracker import start_tracker
 import os
-import threading
-import time
 from telebot.types import ReplyKeyboardMarkup
 from pro_engine import generate_signal, PAIRS
 
 TOKEN=os.getenv("BOT_TOKEN")
+
+# 🔥 SHYIRAMO TELEGRAM ID YAWE NYAYO
 ADMIN_ID=8448217655
 
 bot=telebot.TeleBot(TOKEN)
@@ -18,30 +17,31 @@ waiting_broadcast={}
 waiting_payment={}
 user_pair={}
 pending_list={}
-active_signals={}
 
 # ================= DATABASE =================
 
-def load_json(file,default):
+def load_users():
     try:
-        return json.load(open(file))
+        return json.load(open("users.json"))
     except:
-        return default
+        return {}
 
-def save_json(file,data):
-    json.dump(data,open(file,"w"))
+def save_users(data):
+    json.dump(data,open("users.json","w"))
 
-users=load_json("users.json",{})
-stats=load_json("stats.json",{"win":0,"loss":0})
+users=load_users()
 
 # ================= MENUS =================
 
 def main_menu(chat_id):
+
     kb=ReplyKeyboardMarkup(resize_keyboard=True)
     kb.add("📊 Get Signal")
     kb.add("💳 Payment")
+
     if chat_id==ADMIN_ID:
         kb.add("⚙ ADMIN PANEL")
+
     bot.send_message(chat_id,"Main Menu",reply_markup=kb)
 
 def back_menu(chat_id,text):
@@ -62,72 +62,15 @@ def start(msg):
     if msg.chat.id==ADMIN_ID:
         users[uid]["approved"]=True
 
-    save_json("users.json",users)
+    save_users(users)
+
+    bot.send_message(msg.chat.id,f"Your ID: {msg.chat.id}") # debug
+
     main_menu(msg.chat.id)
-
-# ================= TIMEFRAME SECONDS =================
-
-def tf_seconds(tf):
-    return 60 if tf=="M1" else 300 if tf=="M5" else 900
-
-# ================= TRUE AUTO TRACKER =================
-
-def auto_track(chat_id,pair,signal,entry_price,timeframe,prepare):
-
-    # WAIT ENTRY TIME
-    time.sleep(prepare)
-
-    # IF USER SKIPPED
-    if chat_id not in active_signals:
-        return
-
-    # WAIT FULL CANDLE CLOSE
-    time.sleep(tf_seconds(timeframe)+5)
-
-    if chat_id not in active_signals:
-        return
-
-    prices=get_prices(pair,timeframe)
-    if not prices:
-        return
-
-    close_price=prices[-1]
-
-    result="LOSS"
-
-    if "CALL" in signal and close_price>entry_price:
-        result="WIN"
-
-    if "PUT" in signal and close_price<entry_price:
-        result="WIN"
-
-    if result=="WIN":
-        stats["win"]+=1
-    else:
-        stats["loss"]+=1
-
-    save_json("stats.json",stats)
-
-    active_signals.pop(chat_id,None)
-
-    bot.send_message(chat_id,f"📊 RESULT: {result}")
-
-    bot.send_message(
-        ADMIN_ID,
-f"""📈 AUTO TRACKER
-
-User: {chat_id}
-Pair: {pair}
-Signal: {signal}
-Result: {result}
-
-TOTAL WIN: {stats['win']}
-TOTAL LOSS: {stats['loss']}
-""")
 
 # ================= MESSAGE HANDLER =================
 
-@bot.message_handler(content_types=["text","photo"])
+@bot.message_handler(content_types=["text","photo","video","document"])
 def messages(msg):
 
     uid=str(msg.chat.id)
@@ -158,13 +101,16 @@ def messages(msg):
         return
 
     if text=="📤 Upload Payment Proof":
-        waiting_payment[msg.chat.id]=True
+        waiting_payment[str(msg.chat.id)]=True
         back_menu(msg.chat.id,"Send payment screenshot.")
         return
 
 # ================= SIGNAL =================
 
     if text=="📊 Get Signal":
+
+        if uid not in users:
+            users[uid]={"approved":False}
 
         if not users[uid]["approved"]:
             bot.send_message(msg.chat.id,"🔒 Access Locked")
@@ -214,46 +160,20 @@ def messages(msg):
 📊 AI SIGNAL
 
 Pair: {result['pair']}
-{result['signal']}
+Signal: {result['signal']}
 Timeframe: {result['timeframe']}
 Entry Time: {result['entry_time']}
 Accuracy: {result['accuracy']}
 """
 
-            kb=ReplyKeyboardMarkup(resize_keyboard=True)
-            kb.add("⏭ Skip Signal")
-            kb.add("⬅ Back")
+            bot.send_message(msg.chat.id,message)
 
-            bot.send_message(msg.chat.id,message,reply_markup=kb)
-
-            entry_price=float(result["signal"].split("Price: ")[1].split("\n")[0])
-            prepare=int(result["signal"].split("Prepare: ")[1].split("s")[0])
-
-            active_signals[msg.chat.id]=True
-
-            start_tracker(
-    bot,
-    ADMIN_ID,
-    active_signals,
-    msg.chat.id,
-    pair,
-    result["signal"],
-    entry_price,
-    text,
-    prepare
-            )
+        elif result.get("status")=="wait":
+            bot.send_message(msg.chat.id,result["message"])
 
         else:
             bot.send_message(msg.chat.id,"⚠️ Signal error")
 
-        return
-
-# ================= SKIP =================
-
-    if text=="⏭ Skip Signal":
-
-        active_signals.pop(msg.chat.id,None)
-        bot.send_message(msg.chat.id,"Signal skipped ✅")
         return
 
 # ================= ADMIN PANEL =================
@@ -263,44 +183,24 @@ Accuracy: {result['accuracy']}
         kb=ReplyKeyboardMarkup(resize_keyboard=True)
         kb.add("📩 Broadcast")
         kb.add("👥 Pending Users")
-        kb.add("📊 Win Tracker")
         kb.add("⬅ Back")
 
         bot.send_message(msg.chat.id,"ADMIN PANEL",reply_markup=kb)
         return
 
-# ================= WIN TRACKER =================
-
-    if text=="📊 Win Tracker" and msg.chat.id==ADMIN_ID:
-
-        total=len(users)
-        vip=sum(1 for u in users if users[u]["approved"])
-
-        bot.send_message(
-            msg.chat.id,
-f"""
-📊 BOT STATS
-
-Total Users: {total}
-VIP Users: {vip}
-
-WIN: {stats['win']}
-LOSS: {stats['loss']}
-""")
-        return
-
 # ================= BROADCAST =================
 
     if text=="📩 Broadcast" and msg.chat.id==ADMIN_ID:
+
         waiting_broadcast[msg.chat.id]=True
-        back_menu(msg.chat.id,"Send message/photo/link to broadcast")
+        back_menu(msg.chat.id,"Send ANY message/photo/video/link")
         return
 
 # ================= PENDING USERS =================
 
     if text=="👥 Pending Users" and msg.chat.id==ADMIN_ID:
 
-        pending=[u for u in users if not users[u]["approved"]]
+        pending=[u for u,d in users.items() if not d["approved"]]
 
         if not pending:
             bot.send_message(msg.chat.id,"No pending users")
@@ -319,37 +219,42 @@ LOSS: {stats['loss']}
 
 # ================= APPROVE =================
 
-    if text.startswith("✅ Approve"):
+    if text.startswith("✅ Approve") and msg.chat.id==ADMIN_ID:
 
         user=text.split(" ")[2]
 
-        users[user]["approved"]=True
-        save_json("users.json",users)
+        if user in users:
+            users[user]["approved"]=True
+            save_users(users)
 
-        bot.send_message(user,"✅ Payment Approved")
-        bot.send_message(msg.chat.id,"Approved")
-
+            bot.send_message(user,"✅ Payment Approved. Access Granted.")
+            bot.send_message(msg.chat.id,f"Approved {user}")
         return
 
 # ================= REJECT =================
 
-    if text.startswith("❌ Reject"):
+    if text.startswith("❌ Reject") and msg.chat.id==ADMIN_ID:
 
         user=text.split(" ")[2]
 
-        bot.send_message(user,"❌ Payment Rejected")
-        bot.send_message(msg.chat.id,"Rejected")
-
+        if user in users:
+            bot.send_message(user,"❌ Payment Rejected")
+            bot.send_message(msg.chat.id,f"Rejected {user}")
         return
 
 # ================= PAYMENT PROOF =================
 
-    if msg.chat.id in waiting_payment:
+    if str(msg.chat.id) in waiting_payment:
 
-        bot.forward_message(ADMIN_ID,msg.chat.id,msg.message_id)
+        bot.forward_message(
+            ADMIN_ID,
+            msg.chat.id,
+            msg.message_id
+        )
+
         bot.send_message(msg.chat.id,"✅ Proof sent to admin")
 
-        waiting_payment.pop(msg.chat.id)
+        waiting_payment.pop(str(msg.chat.id))
         return
 
 # ================= BROADCAST SEND =================
@@ -360,10 +265,11 @@ LOSS: {stats['loss']}
 
         for user in users:
             try:
-                if msg.content_type=="text":
-                    bot.send_message(user,msg.text)
-                else:
-                    bot.send_photo(user,msg.photo[-1].file_id,caption=msg.caption)
+                bot.copy_message(
+                    chat_id=user,
+                    from_chat_id=msg.chat.id,
+                    message_id=msg.message_id
+                )
                 sent+=1
             except:
                 pass
@@ -376,4 +282,8 @@ LOSS: {stats['loss']}
 
 # ================= START BOT =================
 
-bot.infinity_polling(timeout=60,long_polling_timeout=60,skip_pending=True)
+bot.infinity_polling(
+    timeout=60,
+    long_polling_timeout=60,
+    skip_pending=True
+                       )
