@@ -1,4 +1,4 @@
-import requests
+hereimport requests
 import statistics
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -29,14 +29,11 @@ def get_prices(pair,timeframe):
     r=requests.get(url).json()
 
     if "values" not in r:
-        print("API ERROR:",r)
         return None
 
     closes=[float(c["close"]) for c in r["values"]]
     closes.reverse()
-
     return closes
-
 
 # ================= RSI =================
 
@@ -48,8 +45,12 @@ def calculate_rsi(prices,period=14):
     for i in range(1,len(prices)):
         diff=prices[i]-prices[i-1]
 
-        gains.append(max(diff,0))
-        losses.append(abs(min(diff,0)))
+        if diff>0:
+            gains.append(diff)
+            losses.append(0)
+        else:
+            gains.append(0)
+            losses.append(abs(diff))
 
     avg_gain=sum(gains[-period:])/period
     avg_loss=sum(losses[-period:])/period
@@ -60,7 +61,6 @@ def calculate_rsi(prices,period=14):
     rs=avg_gain/avg_loss
     return round(100-(100/(1+rs)),2)
 
-
 # ================= TREND =================
 
 def get_trend(prices):
@@ -70,8 +70,7 @@ def get_trend(prices):
 
     return "UP" if sma_fast>sma_slow else "DOWN"
 
-
-# ================= CANDLE STRENGTH =================
+# ================= STRENGTH =================
 
 def candle_strength(prices):
 
@@ -87,8 +86,7 @@ def candle_strength(prices):
     else:
         return "WEAK ⚠️"
 
-
-# ================= ENTRY =================
+# ================= ENTRY TIME =================
 
 def get_entry_time(timeframe):
 
@@ -109,7 +107,6 @@ def get_entry_time(timeframe):
 
     return next_candle.strftime("%H:%M:%S"),prepare
 
-
 # ================= SIGNAL =================
 
 def generate_signal(pair,timeframe):
@@ -125,7 +122,6 @@ def generate_signal(pair,timeframe):
     trend=get_trend(prices)
     strength=candle_strength(prices)
 
-    # STRATEGY YAWE NTIHINDUWE
     if rsi<=35:
         signal="CALL 📈"
     elif rsi>=65:
@@ -155,4 +151,4 @@ def generate_signal(pair,timeframe):
         "timeframe":timeframe,
         "entry_time":entry_time,
         "accuracy":accuracy
-    }
+}
