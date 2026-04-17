@@ -13,6 +13,9 @@ PAIRS=[
     "EUR/USD",
     "GBP/USD",
     "USD/JPY",
+    "AUD/CAD",
+    "USD/CAD",
+    "EUR/JPY",
     "AUD/USD"
 ]
 
@@ -52,7 +55,6 @@ def ai_learn(signal,result):
             ai["buy"]+=1
         else:
             ai["sell"]+=1
-
     else:
         if signal=="BUY":
             ai["sell"]+=1
@@ -75,9 +77,27 @@ def get_candles(pair):
     if "values" not in r:
         return None
 
-    closes=[float(c["close"]) for c in r["values"]]
+    candles=r["values"][::-1]
 
-    return closes[::-1]
+    closes=[float(c["close"]) for c in candles]
+
+    return closes
+
+
+# =====================================================
+# 🔥 IMPORTANT FIX
+# get_prices igarutse kugirango bot.py idacrash
+# kandi tracker ibone candle close
+# =====================================================
+
+def get_prices(pair,timeframe=None):
+
+    closes=get_candles(pair)
+
+    if not closes:
+        return None
+
+    return closes
 
 
 # ================= ANALYSIS =================
@@ -121,9 +141,9 @@ def analyze(closes):
     strength="WEAK"
 
     if abs(score)>=2:
-        strength="STRONG"
+        strength="STRONG 🔥"
     elif abs(score)>=1:
-        strength="MEDIUM"
+        strength="MEDIUM ✅"
 
     return signal,strength,round(score,2)
 
@@ -135,16 +155,30 @@ def generate_signal(pair):
     closes=get_candles(pair)
 
     if not closes:
-        return None
+        return {"status":"error"}
 
     signal,strength,score=analyze(closes)
+
+    price=round(closes[-1],5)
 
     now=datetime.now(ZoneInfo("Africa/Kigali")).strftime("%H:%M:%S")
 
     return {
+        "status":"success",
         "pair":pair,
         "signal":signal,
         "strength":strength,
         "score":score,
-        "time":now
+        "entry_price":price,
+        "time":now,
+        "text":f"""
+📊 PAIR: {pair}
+💰 Price: {price}
+
+🧠 AI Score: {score}
+⚡ Strength: {strength}
+
+🔥 SIGNAL: {signal}
+⏰ Time: {now}
+"""
     }
