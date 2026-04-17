@@ -216,3 +216,8 @@ def generate_signal(pair,timeframe):
 🔥 SIGNAL: {signal}
 """
         }
+    
+    # ================= AI LEARNING (FOR AUTO TRACKER) =================
+
+def ai_learn(pair, trend, strength, result):
+    update_ai(pair, trend, strength, result)
