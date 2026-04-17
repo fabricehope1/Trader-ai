@@ -1,7 +1,7 @@
 import telebot
 import json
 import os
-from telebot.types import ReplyKeyboardMarkup
+from telebot.types import ReplyKeyboardMarkup,InlineKeyboardMarkup,InlineKeyboardButton
 from pro_engine import generate_signal, PAIRS
 
 TOKEN=os.getenv("BOT_TOKEN")
@@ -26,6 +26,17 @@ def load_users():
 
 def save_users(data):
     json.dump(data,open("users.json","w"))
+
+# ===== WIN TRACKER =====
+
+def load_stats():
+    try:
+        return json.load(open("stats.json"))
+    except:
+        return {"wins":0,"losses":0}
+
+def save_stats(data):
+    json.dump(data,open("stats.json","w"))
 
 users=load_users()
 
@@ -134,7 +145,7 @@ def messages(msg):
             reply_markup=kb)
         return
 
-# ================= TIMEFRAME (FIXED) =================
+# ================= TIMEFRAME =================
 
     if text in ["M1","M5","M15"]:
 
@@ -145,10 +156,8 @@ def messages(msg):
             return
 
         timeframe=text
-
         result=generate_signal(pair,timeframe)
 
-        # SUCCESS
         if result.get("status")=="success":
 
             message=f"""
@@ -161,17 +170,45 @@ Entry Time: {result['entry_time']}
 Accuracy: {result['accuracy']}
 """
 
-            bot.send_message(msg.chat.id,message)
+            # ===== BUTTONS ADDED =====
 
-        # WAIT
-        elif result.get("status")=="wait":
-            bot.send_message(msg.chat.id,result["message"])
+            kb=InlineKeyboardMarkup()
 
-        # ERROR
+            kb.add(
+                InlineKeyboardButton("✅ WIN",callback_data="win"),
+                InlineKeyboardButton("❌ LOSS",callback_data="loss")
+            )
+
+            kb.add(
+                InlineKeyboardButton("⏭ SKIP",callback_data="skip")
+            )
+
+            bot.send_message(msg.chat.id,message,reply_markup=kb)
+
         else:
             bot.send_message(msg.chat.id,"⚠️ Signal error")
 
         return
+
+# ================= CALLBACK RESULTS =================
+
+@bot.callback_query_handler(func=lambda call:True)
+def callback(call):
+
+    stats=load_stats()
+
+    if call.data=="win":
+        stats["wins"]+=1
+        save_stats(stats)
+        bot.answer_callback_query(call.id,"WIN saved ✅")
+
+    elif call.data=="loss":
+        stats["losses"]+=1
+        save_stats(stats)
+        bot.answer_callback_query(call.id,"LOSS saved ❌")
+
+    elif call.data=="skip":
+        bot.answer_callback_query(call.id,"Skipped ⏭")
 
 # ================= ADMIN PANEL =================
 
@@ -180,71 +217,34 @@ Accuracy: {result['accuracy']}
         kb=ReplyKeyboardMarkup(resize_keyboard=True)
         kb.add("📩 Broadcast")
         kb.add("👥 Pending Users")
+        kb.add("📊 Win Tracker")
         kb.add("⬅ Back")
 
         bot.send_message(msg.chat.id,"ADMIN PANEL",reply_markup=kb)
         return
 
-# ================= BROADCAST =================
+# ================= WIN TRACKER VIEW =================
 
-    if text=="📩 Broadcast" and msg.chat.id==ADMIN_ID:
+    if text=="📊 Win Tracker" and msg.chat.id==ADMIN_ID:
 
-        waiting_broadcast[msg.chat.id]=True
-        back_menu(msg.chat.id,"Send message/photo/link to broadcast")
-        return
+        s=load_stats()
+        total=s["wins"]+s["losses"]
 
-# ================= PENDING USERS =================
+        winrate=0
+        if total>0:
+            winrate=round((s["wins"]/total)*100,2)
 
-    if text=="👥 Pending Users" and msg.chat.id==ADMIN_ID:
+        bot.send_message(
+            msg.chat.id,
+            f"""
+📊 WIN TRACKER
 
-        pending=[]
-
-        for user,data in users.items():
-            if not data["approved"]:
-                pending.append(user)
-
-        if not pending:
-            bot.send_message(msg.chat.id,"No pending users")
-            return
-
-        pending_list[msg.chat.id]=pending
-
-        kb=ReplyKeyboardMarkup(resize_keyboard=True)
-
-        for u in pending:
-            kb.add(f"✅ Approve {u}")
-            kb.add(f"❌ Reject {u}")
-
-        kb.add("⬅ Back")
-
-        bot.send_message(msg.chat.id,"Pending Users:",reply_markup=kb)
-        return
-
-# ================= APPROVE =================
-
-    if text.startswith("✅ Approve") and msg.chat.id==ADMIN_ID:
-
-        user=text.split(" ")[2]
-
-        if user in users:
-            users[user]["approved"]=True
-            save_users(users)
-
-            bot.send_message(user,"✅ Payment Approved. Access Granted.")
-            bot.send_message(msg.chat.id,f"Approved {user}")
-
-        return
-
-# ================= REJECT =================
-
-    if text.startswith("❌ Reject") and msg.chat.id==ADMIN_ID:
-
-        user=text.split(" ")[2]
-
-        if user in users:
-            bot.send_message(user,"❌ Payment Rejected")
-            bot.send_message(msg.chat.id,f"Rejected {user}")
-
+Trades: {total}
+Wins: {s['wins']}
+Losses: {s['losses']}
+Winrate: {winrate}%
+"""
+        )
         return
 
 # ================= PAYMENT PROOF =================
@@ -257,7 +257,13 @@ Accuracy: {result['accuracy']}
         waiting_payment.pop(msg.chat.id)
         return
 
-# ================= BROADCAST SEND =================
+# ================= BROADCAST =================
+
+    if text=="📩 Broadcast" and msg.chat.id==ADMIN_ID:
+
+        waiting_broadcast[msg.chat.id]=True
+        back_menu(msg.chat.id,"Send broadcast message")
+        return
 
     if msg.chat.id in waiting_broadcast:
 
@@ -265,10 +271,7 @@ Accuracy: {result['accuracy']}
 
         for user in users:
             try:
-                if msg.content_type=="text":
-                    bot.send_message(user,msg.text)
-                else:
-                    bot.send_photo(user,msg.photo[-1].file_id,caption=msg.caption)
+                bot.send_message(user,msg.text)
                 sent+=1
             except:
                 pass
@@ -279,7 +282,7 @@ Accuracy: {result['accuracy']}
         main_menu(msg.chat.id)
         return
 
-# ================= START BOT =================
+# ================= RUN =================
 
 bot.infinity_polling(
     timeout=60,
