@@ -1,3 +1,5 @@
+# ================= PRO ENGINE V7 AI =================
+
 import requests
 import statistics
 import json
@@ -66,21 +68,25 @@ def ai_score(pair,trend,strength):
 
     return w/total
 
-# ================= DATA =================
+# ================= GET MARKET DATA =================
 
 def get_prices(pair,timeframe):
 
+    symbol=pair.replace("/","")   # IMPORTANT FIX
+
     tf=TIMEFRAME_MAP[timeframe]
 
-    url=f"https://api.twelvedata.com/time_series?symbol={pair}&interval={tf}&outputsize=60&apikey={API_KEY}"
+    url=f"https://api.twelvedata.com/time_series?symbol={symbol}&interval={tf}&outputsize=60&apikey={API_KEY}"
 
     r=requests.get(url).json()
 
     if "values" not in r:
+        print("API ERROR:",r)
         return None
 
     closes=[float(c["close"]) for c in r["values"]]
     closes.reverse()
+
     return closes
 
 # ================= RSI =================
@@ -93,12 +99,8 @@ def calculate_rsi(prices,period=14):
     for i in range(1,len(prices)):
         diff=prices[i]-prices[i-1]
 
-        if diff>0:
-            gains.append(diff)
-            losses.append(0)
-        else:
-            gains.append(0)
-            losses.append(abs(diff))
+        gains.append(max(diff,0))
+        losses.append(abs(min(diff,0)))
 
     avg_gain=sum(gains[-period:])/period
     avg_loss=sum(losses[-period:])/period
@@ -116,7 +118,7 @@ def get_trend(prices):
     sma_fast=statistics.mean(prices[-10:])
     sma_slow=statistics.mean(prices[-30:])
 
-    return "UP" if sma_fast>sma_slow else "DOWN"
+    return "UP 📈" if sma_fast>sma_slow else "DOWN 📉"
 
 # ================= STRENGTH =================
 
@@ -134,7 +136,7 @@ def candle_strength(prices):
     else:
         return "WEAK ⚠️"
 
-# ================= ENTRY TIME =================
+# ================= ENTRY TIME (AUTO CANDLE TRACKER) =================
 
 def get_entry_time(timeframe):
 
@@ -145,11 +147,11 @@ def get_entry_time(timeframe):
 
     elif timeframe=="M5":
         minute=(now.minute//5+1)*5
-        next_candle=now.replace(minute=0,second=0,microsecond=0)+timedelta(minutes=minute)
+        next_candle=now.replace(minute=minute%60,second=0,microsecond=0)
 
     else:
         minute=(now.minute//15+1)*15
-        next_candle=now.replace(minute=0,second=0,microsecond=0)+timedelta(minutes=minute)
+        next_candle=now.replace(minute=minute%60,second=0,microsecond=0)
 
     prepare=int((next_candle-now).total_seconds())
 
@@ -172,18 +174,18 @@ def generate_signal(pair,timeframe):
 
     ai=ai_score(pair,trend,strength)
 
-    # ===== SMART SIGNAL LOGIC =====
+    # ===== SMART LOGIC =====
 
     if rsi<=35:
         signal="CALL 📈"
     elif rsi>=65:
         signal="PUT 📉"
     else:
-        signal="CALL 📈" if trend=="UP" else "PUT 📉"
+        signal="CALL 📈" if "UP" in trend else "PUT 📉"
 
-    # AI FILTER
+    # ===== AI FILTER =====
     if ai<0.40:
-        signal="CALL 📈" if signal=="PUT 📉" else "PUT 📉"
+        signal="PUT 📉" if signal=="CALL 📈" else "CALL 📈"
 
     entry_time,prepare=get_entry_time(timeframe)
 
@@ -192,6 +194,14 @@ def generate_signal(pair,timeframe):
     return {
         "status":"success",
         "pair":pair,
+        "price":price,
+        "rsi":rsi,
+        "trend":trend,
+        "strength":strength,
+        "ai":round(ai,2),
+        "accuracy":accuracy,
+        "entry_time":entry_time,
+        "timeframe":timeframe,
         "signal":f"""
 📊 PAIR: {pair}
 💰 Price: {price}
@@ -204,8 +214,5 @@ def generate_signal(pair,timeframe):
 ⏱ Enter At: {entry_time}
 
 🔥 SIGNAL: {signal}
-""",
-        "timeframe":timeframe,
-        "entry_time":entry_time,
-        "accuracy":accuracy
-    }
+"""
+        }
