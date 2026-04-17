@@ -3,8 +3,6 @@ import statistics
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-# ================= SETTINGS =================
-
 API_KEY="f29c55ce7132437e86f7b025670ec8e4"
 
 PAIRS=[
@@ -20,7 +18,7 @@ TIMEFRAME_MAP={
     "M15":"15min"
 }
 
-# ================= GET MARKET DATA =================
+# ================= DATA =================
 
 def get_prices(pair,timeframe):
 
@@ -50,12 +48,8 @@ def calculate_rsi(prices,period=14):
     for i in range(1,len(prices)):
         diff=prices[i]-prices[i-1]
 
-        if diff>0:
-            gains.append(diff)
-            losses.append(0)
-        else:
-            gains.append(0)
-            losses.append(abs(diff))
+        gains.append(max(diff,0))
+        losses.append(abs(min(diff,0)))
 
     avg_gain=sum(gains[-period:])/period
     avg_loss=sum(losses[-period:])/period
@@ -64,9 +58,7 @@ def calculate_rsi(prices,period=14):
         return 100
 
     rs=avg_gain/avg_loss
-    rsi=100-(100/(1+rs))
-
-    return round(rsi,2)
+    return round(100-(100/(1+rs)),2)
 
 
 # ================= TREND =================
@@ -88,17 +80,15 @@ def candle_strength(prices):
     avg_move=sum(moves)/len(moves)
     last_move=abs(prices[-1]-prices[-2])
 
-    if last_move > avg_move*1.8:
+    if last_move>avg_move*1.8:
         return "STRONG 🔥"
-
-    elif last_move > avg_move*1.2:
+    elif last_move>avg_move*1.2:
         return "MEDIUM ✅"
-
     else:
         return "WEAK ⚠️"
 
 
-# ================= ENTRY SYSTEM =================
+# ================= ENTRY =================
 
 def get_entry_time(timeframe):
 
@@ -111,53 +101,46 @@ def get_entry_time(timeframe):
         minute=(now.minute//5+1)*5
         next_candle=now.replace(minute=0,second=0,microsecond=0)+timedelta(minutes=minute)
 
-    elif timeframe=="M15":
+    else:
         minute=(now.minute//15+1)*15
         next_candle=now.replace(minute=0,second=0,microsecond=0)+timedelta(minutes=minute)
 
-    prepare_seconds=int((next_candle-now).total_seconds())
+    prepare=int((next_candle-now).total_seconds())
 
-    return next_candle.strftime("%H:%M:%S"),prepare_seconds
+    return next_candle.strftime("%H:%M:%S"),prepare
 
 
-# ================= SMART SIGNAL ENGINE =================
+# ================= SIGNAL =================
 
 def generate_signal(pair,timeframe):
 
-    try:
+    prices=get_prices(pair,timeframe)
 
-        prices=get_prices(pair,timeframe)
+    if not prices:
+        return {"status":"error"}
 
-        if not prices:
-            return {"status":"error"}
+    price=round(prices[-1],5)
 
-        price=round(prices[-1],5)
+    rsi=calculate_rsi(prices)
+    trend=get_trend(prices)
+    strength=candle_strength(prices)
 
-        rsi=calculate_rsi(prices)
-        trend=get_trend(prices)
-        strength=candle_strength(prices)
+    # STRATEGY YAWE NTIHINDUWE
+    if rsi<=35:
+        signal="CALL 📈"
+    elif rsi>=65:
+        signal="PUT 📉"
+    else:
+        signal="CALL 📈" if trend=="UP" else "PUT 📉"
 
-        # ================= SIGNAL LOGIC =================
+    entry_time,prepare=get_entry_time(timeframe)
 
-        if rsi<=35:
-            signal="CALL 📈"
+    accuracy=f"{round(78+abs(50-rsi)/3,1)}%"
 
-        elif rsi>=65:
-            signal="PUT 📉"
-
-        else:
-            signal="CALL 📈" if trend=="UP" else "PUT 📉"
-
-        # ================= ENTRY TIME =================
-
-        entry_time,prepare=get_entry_time(timeframe)
-
-        accuracy=f"{round(78+abs(50-rsi)/3,1)}%"
-
-        return {
-            "status":"success",
-            "pair":pair,
-            "signal":f"""
+    return {
+        "status":"success",
+        "pair":pair,
+        "signal":f"""
 📊 PAIR: {pair}
 💰 Price: {price}
 📉 RSI: {rsi}
@@ -169,11 +152,7 @@ def generate_signal(pair,timeframe):
 
 🔥 SIGNAL: {signal}
 """,
-            "timeframe":timeframe,
-            "entry_time":entry_time,
-            "accuracy":accuracy
-        }
-
-    except Exception as e:
-        print("ENGINE ERROR:",e)
-        return {"status":"error"}
+        "timeframe":timeframe,
+        "entry_time":entry_time,
+        "accuracy":accuracy
+    }￼Enter
