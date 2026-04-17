@@ -79,6 +79,25 @@ def get_trend(prices):
     return "UP" if sma_fast>sma_slow else "DOWN"
 
 
+# ================= CANDLE STRENGTH =================
+
+def candle_strength(prices):
+
+    moves=[abs(prices[i]-prices[i-1]) for i in range(-6,-1)]
+
+    avg_move=sum(moves)/len(moves)
+    last_move=abs(prices[-1]-prices[-2])
+
+    if last_move > avg_move*1.8:
+        return "STRONG 🔥"
+
+    elif last_move > avg_move*1.2:
+        return "MEDIUM ✅"
+
+    else:
+        return "WEAK ⚠️"
+
+
 # ================= ENTRY SYSTEM =================
 
 def get_entry_time(timeframe):
@@ -116,6 +135,7 @@ def generate_signal(pair,timeframe):
 
         rsi=calculate_rsi(prices)
         trend=get_trend(prices)
+        strength=candle_strength(prices)
 
         # ================= SIGNAL LOGIC =================
 
@@ -142,6 +162,7 @@ def generate_signal(pair,timeframe):
 💰 Price: {price}
 📉 RSI: {rsi}
 📈 Trend: {trend}
+⚡ Strength: {strength}
 
 ⏳ Prepare: {prepare}s
 ⏱ Enter At: {entry_time}
