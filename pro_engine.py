@@ -1,5 +1,6 @@
 import requests
 import statistics
+import json
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -17,6 +18,19 @@ TIMEFRAME_MAP={
     "M5":"5min",
     "M15":"15min"
 }
+
+AI_FILE="ai_memory.json"
+
+# ================= AI MEMORY =================
+
+def load_ai():
+    try:
+        return json.load(open(AI_FILE))
+    except:
+        return {}
+
+def save_ai(data):
+    json.dump(data,open(AI_FILE,"w"))
 
 # ================= DATA =================
 
@@ -80,11 +94,11 @@ def candle_strength(prices):
     last_move=abs(prices[-1]-prices[-2])
 
     if last_move>avg_move*1.8:
-        return "STRONG 🔥"
+        return "STRONG"
     elif last_move>avg_move*1.2:
-        return "MEDIUM ✅"
+        return "MEDIUM"
     else:
-        return "WEAK ⚠️"
+        return "WEAK"
 
 # ================= ENTRY TIME =================
 
@@ -107,6 +121,26 @@ def get_entry_time(timeframe):
 
     return next_candle.strftime("%H:%M:%S"),prepare
 
+# ================= AI LEARNING =================
+
+def ai_score(pair,rsi,trend,strength):
+
+    ai=load_ai()
+
+    key=f"{pair}_{trend}_{strength}"
+
+    if key not in ai:
+        return 0
+
+    data=ai[key]
+
+    total=data["win"]+data["loss"]
+
+    if total<5:
+        return 0
+
+    return (data["win"]-data["loss"])/total
+
 # ================= SIGNAL =================
 
 def generate_signal(pair,timeframe):
@@ -122,6 +156,7 @@ def generate_signal(pair,timeframe):
     trend=get_trend(prices)
     strength=candle_strength(prices)
 
+    # base signal
     if rsi<=35:
         signal="CALL 📈"
     elif rsi>=65:
@@ -129,9 +164,15 @@ def generate_signal(pair,timeframe):
     else:
         signal="CALL 📈" if trend=="UP" else "PUT 📉"
 
+    # AI correction
+    score=ai_score(pair,rsi,trend,strength)
+
+    if score<-0.3:
+        signal="PUT 📉" if "CALL" in signal else "CALL 📈"
+
     entry_time,prepare=get_entry_time(timeframe)
 
-    accuracy=f"{round(78+abs(50-rsi)/3,1)}%"
+    accuracy=round(78+abs(50-rsi)/3+score*10,1)
 
     return {
         "status":"success",
@@ -143,6 +184,8 @@ def generate_signal(pair,timeframe):
 📈 Trend: {trend}
 ⚡ Strength: {strength}
 
+🧠 AI Score: {round(score,2)}
+
 ⏳ Prepare: {prepare}s
 ⏱ Enter At: {entry_time}
 
@@ -150,5 +193,23 @@ def generate_signal(pair,timeframe):
 """,
         "timeframe":timeframe,
         "entry_time":entry_time,
-        "accuracy":accuracy
-}
+        "accuracy":f"{accuracy}%"
+    }
+
+# ================= AI UPDATE =================
+
+def update_ai(pair,trend,strength,result):
+
+    ai=load_ai()
+
+    key=f"{pair}_{trend}_{strength}"
+
+    if key not in ai:
+        ai[key]={"win":0,"loss":0}
+
+    if result=="WIN":
+        ai[key]["win"]+=1
+    else:
+        ai[key]["loss"]+=1
+
+    save_ai(ai)
