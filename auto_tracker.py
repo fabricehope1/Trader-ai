@@ -1,153 +1,84 @@
-import threading
+# ================= AUTO TRACKER V6 =================
+
 import time
-import json
-from pro_engine import get_prices, update_ai
+import requests
+from pro_engine import ai_learn
 
-# ================= LOAD / SAVE =================
-
-def load_json(file,default):
-    try:
-        return json.load(open(file))
-    except:
-        return default
-
-def save_json(file,data):
-    json.dump(data,open(file,"w"))
-
-stats=load_json("stats.json",{"win":0,"loss":0})
-
-# ================= TIMEFRAME SECONDS =================
-
-def tf_seconds(tf):
-    if tf=="M1":
-        return 60
-    elif tf=="M5":
-        return 300
-    else:
-        return 900
+API_KEY="f29c55ce7132437e86f7b025670ec8e4"
 
 
-# ================= MAIN TRACKER =================
+def get_last_close(pair):
+
+    symbol=pair.replace("/","")
+
+    url=f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=1min&outputsize=2&apikey={API_KEY}"
+
+    r=requests.get(url).json()
+
+    if "values" not in r:
+        return None
+
+    closes=[float(c["close"]) for c in r["values"]]
+
+    closes.reverse()
+
+    return closes[-1]
+
+
+# ================= TRACKER =================
 
 def start_tracker(
-        bot,
-        ADMIN_ID,
-        active_signals,
-        chat_id,
-        pair,
-        signal,
-        entry_price,
-        timeframe,
-        prepare):
+    bot,
+    ADMIN_ID,
+    active_signals,
+    chat_id,
+    pair,
+    signal,
+    entry_price,
+    text,
+    prepare
+):
 
-    threading.Thread(
-        target=track_signal,
-        args=(
-            bot,
-            ADMIN_ID,
-            active_signals,
-            chat_id,
-            pair,
-            signal,
-            entry_price,
-            timeframe,
-            prepare),
-        daemon=True
-    ).start()
+    active_signals[chat_id]=True
 
+    entry_close=get_last_close(pair)
 
-# ================= TRACK SIGNAL =================
+    if not entry_close:
+        return
 
-def track_signal(
-        bot,
-        ADMIN_ID,
-        active_signals,
-        chat_id,
-        pair,
-        signal,
-        entry_price,
-        timeframe,
-        prepare):
+    # wait candle close (1min)
+    time.sleep(60)
 
-    try:
+    result_close=get_last_close(pair)
 
-        # WAIT PREPARE + CANDLE CLOSE + BUFFER
-        wait_time = prepare + tf_seconds(timeframe) + 5
-        time.sleep(wait_time)
+    if not result_close:
+        return
 
-        # USER SKIPPED SIGNAL
-        if chat_id not in active_signals:
-            return
+    win=False
 
-        prices=get_prices(pair,timeframe)
+    if signal=="BUY" and result_close>entry_close:
+        win=True
 
-        if not prices:
-            return
+    if signal=="SELL" and result_close<entry_close:
+        win=True
 
-        # ===== CLOSE CANDLE PRICE =====
-        close_price=prices[-1]
+    result="WIN" if win else "LOSS"
 
-        result="LOSS"
+    # ===== AI LEARNING =====
+    ai_learn(signal,result)
 
-        if "CALL" in signal and close_price>entry_price:
-            result="WIN"
-
-        if "PUT" in signal and close_price<entry_price:
-            result="WIN"
-
-        # ================= SAVE STATS =================
-
-        if result=="WIN":
-            stats["win"]+=1
-        else:
-            stats["loss"]+=1
-
-        save_json("stats.json",stats)
-
-        # ================= AI LEARNING =================
-
-        trend="UP" if "Trend: UP" in signal else "DOWN"
-
-        if "STRONG" in signal:
-            strength="STRONG 🔥"
-        elif "MEDIUM" in signal:
-            strength="MEDIUM ✅"
-        else:
-            strength="WEAK ⚠️"
-
-        update_ai(pair,trend,strength,result)
-
-        # REMOVE ACTIVE SIGNAL
-        active_signals.pop(chat_id,None)
-
-        # ================= USER RESULT =================
-
-        bot.send_message(
-            chat_id,
-f"""
-📊 RESULT CLOSED
+    msg=f"""
+📊 RESULT
 
 Pair: {pair}
-Entry: {entry_price}
-Close: {close_price}
+Signal: {signal}
 
-✅ RESULT: {result}
-""")
+Entry Candle Close: {entry_close}
+Result Candle Close: {result_close}
 
-        # ================= ADMIN REPORT =================
+✅ {result}
+"""
 
-        bot.send_message(
-            ADMIN_ID,
-f"""
-📈 AUTO TRACKER REPORT
+    bot.send_message(chat_id,msg)
 
-User: {chat_id}
-Pair: {pair}
-Result: {result}
-
-TOTAL WIN: {stats['win']}
-TOTAL LOSS: {stats['loss']}
-""")
-
-    except Exception as e:
-        print("TRACKER ERROR:",e)
+    active_signals.pop(chat_id,None)
