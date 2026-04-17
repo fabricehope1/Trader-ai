@@ -1,4 +1,4 @@
-import telebot
+from auto_tracker import start_trackerimport telebot
 import json
 import os
 import threading
@@ -230,10 +230,17 @@ Accuracy: {result['accuracy']}
 
             active_signals[msg.chat.id]=True
 
-            threading.Thread(
-                target=auto_track,
-                args=(msg.chat.id,pair,result["signal"],entry_price,text,prepare)
-            ).start()
+            start_tracker(
+    bot,
+    ADMIN_ID,
+    active_signals,
+    msg.chat.id,
+    pair,
+    result["signal"],
+    entry_price,
+    text,
+    prepare
+            )
 
         else:
             bot.send_message(msg.chat.id,"⚠️ Signal error")
