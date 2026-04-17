@@ -69,15 +69,20 @@ def start(msg):
 def tf_seconds(tf):
     return 60 if tf=="M1" else 300 if tf=="M5" else 900
 
-# ================= ULTRA AUTO TRACKER =================
+# ================= TRUE AUTO TRACKER =================
 
 def auto_track(chat_id,pair,signal,entry_price,timeframe,prepare):
 
-    # wait prepare + candle close
-    wait_time = prepare + tf_seconds(timeframe) + 5
-    time.sleep(wait_time)
+    # WAIT ENTRY TIME
+    time.sleep(prepare)
 
-    # user skipped?
+    # IF USER SKIPPED
+    if chat_id not in active_signals:
+        return
+
+    # WAIT FULL CANDLE CLOSE
+    time.sleep(tf_seconds(timeframe)+5)
+
     if chat_id not in active_signals:
         return
 
@@ -86,12 +91,6 @@ def auto_track(chat_id,pair,signal,entry_price,timeframe,prepare):
         return
 
     close_price=prices[-1]
-
-    move=abs(close_price-entry_price)
-
-    # noise filter
-    if move < 0.00005:
-        return
 
     result="LOSS"
 
