@@ -1,5 +1,6 @@
-from auto_tracker import start_tracker import telebot
+import telebot
 import json
+from auto_tracker import start_tracker
 import os
 import threading
 import time
