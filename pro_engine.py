@@ -155,4 +155,4 @@ def generate_signal(pair,timeframe):
         "timeframe":timeframe,
         "entry_time":entry_time,
         "accuracy":accuracy
-    }￼Enter
+    }
