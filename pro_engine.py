@@ -1,4 +1,4 @@
-hereimport requests
+import requests
 import statistics
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
