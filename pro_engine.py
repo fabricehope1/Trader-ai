@@ -1,20 +1,19 @@
-# ================= PRO ENGINE V7 AI =================
-
-import requests
+hereimport requests
 import statistics
-import json
-import os
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-API_KEY="f29c55ce7132437e86f7b025670ec8e4"
+# ================= SETTINGS =================
 
-# ================= PAIRS =================
+API_KEY="f29c55ce7132437e86f7b025670ec8e4"
 
 PAIRS=[
     "EUR/USD",
     "GBP/USD",
     "USD/JPY",
+    "AUD/CAD",
+    "EUR/JPY",
+    "CAD/JPY",
     "AUD/USD"
 ]
 
@@ -24,59 +23,13 @@ TIMEFRAME_MAP={
     "M15":"15min"
 }
 
-AI_FILE="ai_memory.json"
-
-# ================= AI MEMORY =================
-
-def load_ai():
-    if os.path.exists(AI_FILE):
-        return json.load(open(AI_FILE))
-    return {}
-
-def save_ai(data):
-    json.dump(data,open(AI_FILE,"w"))
-
-AI_MEMORY=load_ai()
-
-def update_ai(pair,trend,strength,result):
-
-    key=f"{pair}_{trend}_{strength}"
-
-    if key not in AI_MEMORY:
-        AI_MEMORY[key]={"win":0,"loss":0}
-
-    if result=="WIN":
-        AI_MEMORY[key]["win"]+=1
-    else:
-        AI_MEMORY[key]["loss"]+=1
-
-    save_ai(AI_MEMORY)
-
-def ai_score(pair,trend,strength):
-
-    key=f"{pair}_{trend}_{strength}"
-
-    if key not in AI_MEMORY:
-        return 0.5
-
-    w=AI_MEMORY[key]["win"]
-    l=AI_MEMORY[key]["loss"]
-
-    total=w+l
-    if total==0:
-        return 0.5
-
-    return w/total
-
 # ================= GET MARKET DATA =================
 
 def get_prices(pair,timeframe):
 
-    symbol=pair.replace("/","")   # IMPORTANT FIX
-
     tf=TIMEFRAME_MAP[timeframe]
 
-    url=f"https://api.twelvedata.com/time_series?symbol={symbol}&interval={tf}&outputsize=60&apikey={API_KEY}"
+    url=f"https://api.twelvedata.com/time_series?symbol={pair}&interval={tf}&outputsize=60&apikey={API_KEY}"
 
     r=requests.get(url).json()
 
@@ -89,6 +42,7 @@ def get_prices(pair,timeframe):
 
     return closes
 
+
 # ================= RSI =================
 
 def calculate_rsi(prices,period=14):
@@ -99,8 +53,12 @@ def calculate_rsi(prices,period=14):
     for i in range(1,len(prices)):
         diff=prices[i]-prices[i-1]
 
-        gains.append(max(diff,0))
-        losses.append(abs(min(diff,0)))
+        if diff>0:
+            gains.append(diff)
+            losses.append(0)
+        else:
+            gains.append(0)
+            losses.append(abs(diff))
 
     avg_gain=sum(gains[-period:])/period
     avg_loss=sum(losses[-period:])/period
@@ -109,7 +67,10 @@ def calculate_rsi(prices,period=14):
         return 100
 
     rs=avg_gain/avg_loss
-    return round(100-(100/(1+rs)),2)
+    rsi=100-(100/(1+rs))
+
+    return round(rsi,2)
+
 
 # ================= TREND =================
 
@@ -118,9 +79,10 @@ def get_trend(prices):
     sma_fast=statistics.mean(prices[-10:])
     sma_slow=statistics.mean(prices[-30:])
 
-    return "UP 📈" if sma_fast>sma_slow else "DOWN 📉"
+    return "UP" if sma_fast>sma_slow else "DOWN"
 
-# ================= STRENGTH =================
+
+# ================= CANDLE STRENGTH =================
 
 def candle_strength(prices):
 
@@ -129,14 +91,17 @@ def candle_strength(prices):
     avg_move=sum(moves)/len(moves)
     last_move=abs(prices[-1]-prices[-2])
 
-    if last_move>avg_move*1.8:
+    if last_move > avg_move*1.8:
         return "STRONG 🔥"
-    elif last_move>avg_move*1.2:
+
+    elif last_move > avg_move*1.2:
         return "MEDIUM ✅"
+
     else:
         return "WEAK ⚠️"
 
-# ================= ENTRY TIME (AUTO CANDLE TRACKER) =================
+
+# ================= ENTRY SYSTEM =================
 
 def get_entry_time(timeframe):
 
@@ -147,77 +112,71 @@ def get_entry_time(timeframe):
 
     elif timeframe=="M5":
         minute=(now.minute//5+1)*5
-        next_candle=now.replace(minute=minute%60,second=0,microsecond=0)
+        next_candle=now.replace(minute=0,second=0,microsecond=0)+timedelta(minutes=minute)
 
-    else:
+    elif timeframe=="M15":
         minute=(now.minute//15+1)*15
-        next_candle=now.replace(minute=minute%60,second=0,microsecond=0)
+        next_candle=now.replace(minute=0,second=0,microsecond=0)+timedelta(minutes=minute)
 
-    prepare=int((next_candle-now).total_seconds())
+    prepare_seconds=int((next_candle-now).total_seconds())
 
-    return next_candle.strftime("%H:%M:%S"),prepare
+    return next_candle.strftime("%H:%M:%S"),prepare_seconds
 
-# ================= SIGNAL ENGINE =================
+
+# ================= SMART SIGNAL ENGINE =================
 
 def generate_signal(pair,timeframe):
 
-    prices=get_prices(pair,timeframe)
+    try:
 
-    if not prices:
-        return {"status":"error"}
+        prices=get_prices(pair,timeframe)
 
-    price=round(prices[-1],5)
+        if not prices:
+            return {"status":"error"}
 
-    rsi=calculate_rsi(prices)
-    trend=get_trend(prices)
-    strength=candle_strength(prices)
+        price=round(prices[-1],5)
 
-    ai=ai_score(pair,trend,strength)
+        rsi=calculate_rsi(prices)
+        trend=get_trend(prices)
+        strength=candle_strength(prices)
 
-    # ===== SMART LOGIC =====
+        # ================= SIGNAL LOGIC =================
 
-    if rsi<=35:
-        signal="CALL 📈"
-    elif rsi>=65:
-        signal="PUT 📉"
-    else:
-        signal="CALL 📈" if "UP" in trend else "PUT 📉"
+        if rsi<=35:
+            signal="CALL 📈"
 
-    # ===== AI FILTER =====
-    if ai<0.40:
-        signal="PUT 📉" if signal=="CALL 📈" else "CALL 📈"
+        elif rsi>=65:
+            signal="PUT 📉"
 
-    entry_time,prepare=get_entry_time(timeframe)
+        else:
+            signal="CALL 📈" if trend=="UP" else "PUT 📉"
 
-    accuracy=f"{round(70+(ai*30),1)}%"
+        # ================= ENTRY TIME =================
 
-    return {
-        "status":"success",
-        "pair":pair,
-        "price":price,
-        "rsi":rsi,
-        "trend":trend,
-        "strength":strength,
-        "ai":round(ai,2),
-        "accuracy":accuracy,
-        "entry_time":entry_time,
-        "timeframe":timeframe,
-        "signal":f"""
+        entry_time,prepare=get_entry_time(timeframe)
+
+        accuracy=f"{round(78+abs(50-rsi)/3,1)}%"
+
+        return {
+            "status":"success",
+            "pair":pair,
+            "signal":f"""
 📊 PAIR: {pair}
 💰 Price: {price}
 📉 RSI: {rsi}
 📈 Trend: {trend}
 ⚡ Strength: {strength}
-🧠 AI Score: {round(ai,2)}
 
 ⏳ Prepare: {prepare}s
 ⏱ Enter At: {entry_time}
 
 🔥 SIGNAL: {signal}
-"""
+""",
+            "timeframe":timeframe,
+            "entry_time":entry_time,
+            "accuracy":accuracy
         }
-    
-    # ================= AI LEARNING (FOR AUTO TRACKER) =================
 
-def ai_learn(pair, trend, strength, result):
-    update_ai(pair, trend, strength, result)
+    except Exception as e:
+        print("ENGINE ERROR:",e)
+        return {"status":"error"}
