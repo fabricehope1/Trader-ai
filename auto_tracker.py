@@ -1,8 +1,9 @@
+import threading
 import time
 import json
-from pro_engine import get_prices
+from pro_engine import get_prices, update_ai
 
-# ================= LOAD SAVE =================
+# ================= LOAD / SAVE =================
 
 def load_json(file,default):
     try:
@@ -15,22 +16,18 @@ def save_json(file,data):
 
 stats=load_json("stats.json",{"win":0,"loss":0})
 
-
-# ================= TIMEFRAME =================
+# ================= TIMEFRAME SECONDS =================
 
 def tf_seconds(tf):
-
     if tf=="M1":
         return 60
-    if tf=="M5":
+    elif tf=="M5":
         return 300
-    if tf=="M15":
+    else:
         return 900
 
-    return 60
 
-
-# ================= AUTO TRACKER =================
+# ================= MAIN TRACKER =================
 
 def start_tracker(
         bot,
@@ -43,30 +40,52 @@ def start_tracker(
         timeframe,
         prepare):
 
-    def tracker():
+    threading.Thread(
+        target=track_signal,
+        args=(
+            bot,
+            ADMIN_ID,
+            active_signals,
+            chat_id,
+            pair,
+            signal,
+            entry_price,
+            timeframe,
+            prepare),
+        daemon=True
+    ).start()
 
-        # 1️⃣ WAIT PREPARE TIME
-        time.sleep(prepare)
 
-        # 2️⃣ WAIT FULL CANDLE
-        candle_time=tf_seconds(timeframe)
+# ================= TRACK SIGNAL =================
 
-        time.sleep(candle_time)
+def track_signal(
+        bot,
+        ADMIN_ID,
+        active_signals,
+        chat_id,
+        pair,
+        signal,
+        entry_price,
+        timeframe,
+        prepare):
 
-        # 3️⃣ BUFFER (avoid fake result)
-        time.sleep(5)
+    try:
 
-        # user skipped?
+        # WAIT PREPARE + CANDLE CLOSE + BUFFER
+        wait_time = prepare + tf_seconds(timeframe) + 5
+        time.sleep(wait_time)
+
+        # USER SKIPPED SIGNAL
         if chat_id not in active_signals:
             return
 
         prices=get_prices(pair,timeframe)
 
-        if not prices or len(prices)<3:
+        if not prices:
             return
 
-        # ✅ CLOSED CANDLE PRICE
-        close_price=prices[-2]
+        # ===== CLOSE CANDLE PRICE =====
+        close_price=prices[-1]
 
         result="LOSS"
 
@@ -76,6 +95,8 @@ def start_tracker(
         if "PUT" in signal and close_price<entry_price:
             result="WIN"
 
+        # ================= SAVE STATS =================
+
         if result=="WIN":
             stats["win"]+=1
         else:
@@ -83,21 +104,50 @@ def start_tracker(
 
         save_json("stats.json",stats)
 
+        # ================= AI LEARNING =================
+
+        trend="UP" if "Trend: UP" in signal else "DOWN"
+
+        if "STRONG" in signal:
+            strength="STRONG 🔥"
+        elif "MEDIUM" in signal:
+            strength="MEDIUM ✅"
+        else:
+            strength="WEAK ⚠️"
+
+        update_ai(pair,trend,strength,result)
+
+        # REMOVE ACTIVE SIGNAL
         active_signals.pop(chat_id,None)
 
-        bot.send_message(chat_id,f"📊 RESULT: {result}")
+        # ================= USER RESULT =================
+
+        bot.send_message(
+            chat_id,
+f"""
+📊 RESULT CLOSED
+
+Pair: {pair}
+Entry: {entry_price}
+Close: {close_price}
+
+✅ RESULT: {result}
+""")
+
+        # ================= ADMIN REPORT =================
 
         bot.send_message(
             ADMIN_ID,
-f"""📈 AUTO TRACKER
+f"""
+📈 AUTO TRACKER REPORT
 
 User: {chat_id}
 Pair: {pair}
 Result: {result}
 
-WIN: {stats['win']}
-LOSS: {stats['loss']}
+TOTAL WIN: {stats['win']}
+TOTAL LOSS: {stats['loss']}
 """)
 
-    import threading
-    threading.Thread(target=tracker).start()
+    except Exception as e:
+        print("TRACKER ERROR:",e)
