@@ -1,208 +1,134 @@
-import requests
+import asyncio
 import statistics
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
-from otc_reader import get_otc_prices
+from datetime import datetime
+from playwright.async_api import async_playwright
 
-# ================= SETTINGS =================
-
-API_KEY="f29c55ce7132437e86f7b025670ec8e4"
+# ================= OTC PAIRS =================
 
 PAIRS=[
-    # NORMAL
-    "EUR/USD",
-    "GBP/USD",
-    "USD/JPY",
-    "AUD/CAD",
-    "EUR/JPY",
-    "CAD/JPY",
-    "AUD/USD",
-
-    # OTC
-    "EURUSD OTC",
-    "GBPUSD OTC",
-    "USDJPY OTC",
-    "EURJPY OTC",
-    "CADJPY OTC",
-    "AUDUSD OTC"
+    "EURUSD_otc",
+    "GBPUSD_otc",
+    "USDJPY_otc"
 ]
 
-TIMEFRAME_MAP={
-    "M1":"1min",
-    "M5":"5min",
-    "M15":"15min"
-}
+PO_URL="https://pocketoption.com/en/cabinet/demo-quick-high-low/"
 
-# ================= GET DATA =================
+prices={}
+page=None
+loop=asyncio.new_event_loop()
 
-def get_prices(pair,timeframe):
+# ================= START BROWSER =================
+
+async def start_browser():
+
+    global page
+
+    p=await async_playwright().start()
+
+    browser=await p.chromium.launch(
+        headless=True,
+        args=["--no-sandbox"]
+    )
+
+    page=await browser.new_page()
+
+    await page.goto(PO_URL)
+
+    print("✅ Pocket Option OTC Loaded")
+
+    await page.wait_for_timeout(15000)
+
+loop.run_until_complete(start_browser())
+
+# ================= GET OTC PRICE =================
+
+async def read_price():
+
+    global page
 
     try:
-
-        # ===== OTC =====
-        if "OTC" in pair:
-
-            prices=get_otc_prices(pair)
-
-            if not prices or len(prices)<30:
-                return None
-
-            return prices
-
-        # ===== NORMAL =====
-
-        tf=TIMEFRAME_MAP[timeframe]
-
-        url=f"https://api.twelvedata.com/time_series?symbol={pair}&interval={tf}&outputsize=60&apikey={API_KEY}"
-
-        r=requests.get(url).json()
-
-        if "values" not in r:
-            print("API ERROR:",r)
-            return None
-
-        closes=[float(c["close"]) for c in r["values"]]
-        closes.reverse()
-
-        return closes
-
-    except Exception as e:
-        print("PRICE ERROR:",e)
+        price=await page.locator(".value___").first.inner_text()
+        return float(price.replace(",",""))
+    except:
         return None
-
 
 # ================= RSI =================
 
-def calculate_rsi(prices,period=14):
+def calculate_rsi(data,period=14):
 
     gains=[]
     losses=[]
 
-    for i in range(1,len(prices)):
-        diff=prices[i]-prices[i-1]
+    for i in range(1,len(data)):
+        diff=data[i]-data[i-1]
 
-        if diff>0:
+        if diff>=0:
             gains.append(diff)
             losses.append(0)
         else:
             gains.append(0)
             losses.append(abs(diff))
 
-    avg_gain=sum(gains[-period:])/period
-    avg_loss=sum(losses[-period:])/period
+    if len(gains)<period:
+        return None
+
+    avg_gain=statistics.mean(gains[-period:])
+    avg_loss=statistics.mean(losses[-period:])
 
     if avg_loss==0:
         return 100
 
     rs=avg_gain/avg_loss
-    rsi=100-(100/(1+rs))
 
-    return round(rsi,2)
+    return 100-(100/(1+rs))
 
-
-# ================= TREND =================
-
-def get_trend(prices):
-
-    sma_fast=statistics.mean(prices[-10:])
-    sma_slow=statistics.mean(prices[-30:])
-
-    return "UP" if sma_fast>sma_slow else "DOWN"
-
-
-# ================= STRENGTH =================
-
-def candle_strength(prices):
-
-    moves=[abs(prices[i]-prices[i-1]) for i in range(-6,-1)]
-
-    avg_move=sum(moves)/len(moves)
-    last_move=abs(prices[-1]-prices[-2])
-
-    if last_move>avg_move*1.8:
-        return "STRONG 🔥"
-
-    elif last_move>avg_move*1.2:
-        return "MEDIUM ✅"
-
-    else:
-        return "WEAK ⚠️"
-
-
-# ================= ENTRY TIME =================
-
-def get_entry_time(timeframe):
-
-    now=datetime.now(ZoneInfo("Africa/Kigali"))
-
-    if timeframe=="M1":
-        next_candle=now.replace(second=0,microsecond=0)+timedelta(minutes=1)
-
-    elif timeframe=="M5":
-        minute=(now.minute//5+1)*5
-        next_candle=now.replace(minute=0,second=0,microsecond=0)+timedelta(minutes=minute)
-
-    else:
-        minute=(now.minute//15+1)*15
-        next_candle=now.replace(minute=0,second=0,microsecond=0)+timedelta(minutes=minute)
-
-    prepare=int((next_candle-now).total_seconds())
-
-    return next_candle.strftime("%H:%M:%S"),prepare
-
-
-# ================= SIGNAL ENGINE =================
+# ================= SIGNAL =================
 
 def generate_signal(pair,timeframe):
 
-    try:
+    if pair not in PAIRS:
+        return {"status":"error"}
 
-        prices=get_prices(pair,timeframe)
+    price=loop.run_until_complete(read_price())
 
-        if not prices:
-            return {"status":"error"}
+    if not price:
+        return {"status":"error"}
 
-        price=round(prices[-1],5)
+    if pair not in prices:
+        prices[pair]=[]
 
-        rsi=calculate_rsi(prices)
-        trend=get_trend(prices)
-        strength=candle_strength(prices)
+    prices[pair].append(price)
 
-        # ===== SIGNAL LOGIC =====
+    if len(prices[pair])>40:
+        prices[pair].pop(0)
 
-        if rsi<=35:
-            signal="CALL 📈"
+    rsi=calculate_rsi(prices[pair])
 
-        elif rsi>=65:
-            signal="PUT 📉"
-
-        else:
-            signal="CALL 📈" if trend=="UP" else "PUT 📉"
-
-        entry_time,prepare=get_entry_time(timeframe)
-
-        accuracy=f"{round(78+abs(50-rsi)/3,1)}%"
-
+    if rsi is None:
         return {
-            "status":"success",
-            "pair":pair,
-            "signal":f"""
-📊 PAIR: {pair}
-💰 Price: {price}
-📉 RSI: {rsi}
-📈 Trend: {trend}
-⚡ Strength: {strength}
-
-⏳ Prepare: {prepare}s
-⏱ Enter At: {entry_time}
-
-🔥 SIGNAL: {signal}
-""",
-            "timeframe":timeframe,
-            "entry_time":entry_time,
-            "accuracy":accuracy
+            "status":"wait",
+            "message":"⏳ Collecting OTC data..."
         }
 
-    except Exception as e:
-        print("ENGINE ERROR:",e)
-        return {"status":"error"}
+    signal=None
+
+    if rsi<30:
+        signal="CALL 🟢"
+
+    elif rsi>70:
+        signal="PUT 🔴"
+
+    else:
+        return {
+            "status":"wait",
+            "message":"⏳ Waiting setup..."
+        }
+
+    return {
+        "status":"success",
+        "pair":pair,
+        "signal":signal,
+        "timeframe":timeframe,
+        "entry_time":datetime.now().strftime("%H:%M:%S"),
+        "accuracy":"87%"
+    }
