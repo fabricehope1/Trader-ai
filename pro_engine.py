@@ -2,19 +2,29 @@ import requests
 import statistics
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+from otc_reader import get_otc_prices
 
 # ================= SETTINGS =================
 
 API_KEY="f29c55ce7132437e86f7b025670ec8e4"
 
 PAIRS=[
+    # NORMAL
     "EUR/USD",
     "GBP/USD",
     "USD/JPY",
     "AUD/CAD",
     "EUR/JPY",
     "CAD/JPY",
-    "AUD/USD"
+    "AUD/USD",
+
+    # OTC
+    "EURUSD OTC",
+    "GBPUSD OTC",
+    "USDJPY OTC",
+    "EURJPY OTC",
+    "CADJPY OTC",
+    "AUDUSD OTC"
 ]
 
 TIMEFRAME_MAP={
@@ -23,24 +33,42 @@ TIMEFRAME_MAP={
     "M15":"15min"
 }
 
-# ================= GET MARKET DATA =================
+# ================= GET DATA =================
 
 def get_prices(pair,timeframe):
 
-    tf=TIMEFRAME_MAP[timeframe]
+    try:
 
-    url=f"https://api.twelvedata.com/time_series?symbol={pair}&interval={tf}&outputsize=60&apikey={API_KEY}"
+        # ===== OTC =====
+        if "OTC" in pair:
 
-    r=requests.get(url).json()
+            prices=get_otc_prices(pair)
 
-    if "values" not in r:
-        print("API ERROR:",r)
+            if not prices or len(prices)<30:
+                return None
+
+            return prices
+
+        # ===== NORMAL =====
+
+        tf=TIMEFRAME_MAP[timeframe]
+
+        url=f"https://api.twelvedata.com/time_series?symbol={pair}&interval={tf}&outputsize=60&apikey={API_KEY}"
+
+        r=requests.get(url).json()
+
+        if "values" not in r:
+            print("API ERROR:",r)
+            return None
+
+        closes=[float(c["close"]) for c in r["values"]]
+        closes.reverse()
+
+        return closes
+
+    except Exception as e:
+        print("PRICE ERROR:",e)
         return None
-
-    closes=[float(c["close"]) for c in r["values"]]
-    closes.reverse()
-
-    return closes
 
 
 # ================= RSI =================
@@ -82,7 +110,7 @@ def get_trend(prices):
     return "UP" if sma_fast>sma_slow else "DOWN"
 
 
-# ================= CANDLE STRENGTH =================
+# ================= STRENGTH =================
 
 def candle_strength(prices):
 
@@ -91,17 +119,17 @@ def candle_strength(prices):
     avg_move=sum(moves)/len(moves)
     last_move=abs(prices[-1]-prices[-2])
 
-    if last_move > avg_move*1.8:
+    if last_move>avg_move*1.8:
         return "STRONG 🔥"
 
-    elif last_move > avg_move*1.2:
+    elif last_move>avg_move*1.2:
         return "MEDIUM ✅"
 
     else:
         return "WEAK ⚠️"
 
 
-# ================= ENTRY SYSTEM =================
+# ================= ENTRY TIME =================
 
 def get_entry_time(timeframe):
 
@@ -114,16 +142,16 @@ def get_entry_time(timeframe):
         minute=(now.minute//5+1)*5
         next_candle=now.replace(minute=0,second=0,microsecond=0)+timedelta(minutes=minute)
 
-    elif timeframe=="M15":
+    else:
         minute=(now.minute//15+1)*15
         next_candle=now.replace(minute=0,second=0,microsecond=0)+timedelta(minutes=minute)
 
-    prepare_seconds=int((next_candle-now).total_seconds())
+    prepare=int((next_candle-now).total_seconds())
 
-    return next_candle.strftime("%H:%M:%S"),prepare_seconds
+    return next_candle.strftime("%H:%M:%S"),prepare
 
 
-# ================= SMART SIGNAL ENGINE =================
+# ================= SIGNAL ENGINE =================
 
 def generate_signal(pair,timeframe):
 
@@ -140,7 +168,7 @@ def generate_signal(pair,timeframe):
         trend=get_trend(prices)
         strength=candle_strength(prices)
 
-        # ================= SIGNAL LOGIC =================
+        # ===== SIGNAL LOGIC =====
 
         if rsi<=35:
             signal="CALL 📈"
@@ -150,8 +178,6 @@ def generate_signal(pair,timeframe):
 
         else:
             signal="CALL 📈" if trend=="UP" else "PUT 📉"
-
-        # ================= ENTRY TIME =================
 
         entry_time,prepare=get_entry_time(timeframe)
 
