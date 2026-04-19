@@ -13,6 +13,7 @@ PAIRS=[
     "USD/JPY",
     "AUD/CAD",
     "CAD/JPY",
+    "GBP/JPY",
     "AUD/USD"
 ]
 
@@ -28,19 +29,18 @@ def get_prices(pair,timeframe):
 
     tf=TIMEFRAME_MAP[timeframe]
 
-    url=f"https://api.twelvedata.com/time_series?symbol={pair}&interval={tf}&outputsize=60&apikey={API_KEY}"
+    url=f"https://api.twelvedata.com/time_series?symbol={pair}&interval={tf}&outputsize=120&apikey={API_KEY}"
 
     r=requests.get(url).json()
 
     if "values" not in r:
-        print("API ERROR:",r)
+        print("API ERROR:", r)
         return None
 
     closes=[float(c["close"]) for c in r["values"]]
     closes.reverse()
 
     return closes
-
 
 # ================= RSI =================
 
@@ -51,13 +51,8 @@ def calculate_rsi(prices,period=14):
 
     for i in range(1,len(prices)):
         diff=prices[i]-prices[i-1]
-
-        if diff>0:
-            gains.append(diff)
-            losses.append(0)
-        else:
-            gains.append(0)
-            losses.append(abs(diff))
+        gains.append(max(diff,0))
+        losses.append(abs(min(diff,0)))
 
     avg_gain=sum(gains[-period:])/period
     avg_loss=sum(losses[-period:])/period
@@ -66,63 +61,75 @@ def calculate_rsi(prices,period=14):
         return 100
 
     rs=avg_gain/avg_loss
-    rsi=100-(100/(1+rs))
-
-    return round(rsi,2)
-
+    return round(100-(100/(1+rs)),2)
 
 # ================= TREND =================
 
 def get_trend(prices):
 
-    sma_fast=statistics.mean(prices[-10:])
-    sma_slow=statistics.mean(prices[-30:])
+    fast=statistics.mean(prices[-10:])
+    slow=statistics.mean(prices[-30:])
 
-    return "UP" if sma_fast>sma_slow else "DOWN"
+    if fast>slow:
+        return "UP 📈"
+    else:
+        return "DOWN 📉"
 
+# ================= MARKET STRENGTH =================
 
-# ================= CANDLE STRENGTH =================
+def market_strength(prices):
 
-def candle_strength(prices):
+    moves=[abs(prices[i]-prices[i-1]) for i in range(-10,-1)]
 
-    moves=[abs(prices[i]-prices[i-1]) for i in range(-6,-1)]
+    avg=sum(moves)/len(moves)
+    last=abs(prices[-1]-prices[-2])
 
-    avg_move=sum(moves)/len(moves)
-    last_move=abs(prices[-1]-prices[-2])
-
-    if last_move > avg_move*1.8:
+    if last > avg*1.8:
         return "STRONG 🔥"
 
-    elif last_move > avg_move*1.2:
+    elif last > avg*1.2:
         return "MEDIUM ✅"
 
     else:
         return "WEAK ⚠️"
 
+# ================= MOMENTUM =================
 
-# ================= ENTRY SYSTEM =================
+def momentum(prices):
+
+    up=sum(1 for i in range(-6,-1) if prices[i]>prices[i-1])
+    down=sum(1 for i in range(-6,-1) if prices[i]<prices[i-1])
+
+    if up>=4:
+        return "BUY 🔥"
+
+    if down>=4:
+        return "SELL 🔥"
+
+    return "SIDEWAYS ⚠️"
+
+# ================= ENTRY TIME =================
 
 def get_entry_time(timeframe):
 
     now=datetime.now(ZoneInfo("Africa/Kigali"))
 
     if timeframe=="M1":
-        next_candle=now.replace(second=0,microsecond=0)+timedelta(minutes=1)
+        nxt=now.replace(second=0,microsecond=0)+timedelta(minutes=1)
 
     elif timeframe=="M5":
         minute=(now.minute//5+1)*5
-        next_candle=now.replace(minute=0,second=0,microsecond=0)+timedelta(minutes=minute)
+        nxt=now.replace(minute=0,second=0,microsecond=0)+timedelta(minutes=minute)
 
-    elif timeframe=="M15":
+    else:
         minute=(now.minute//15+1)*15
-        next_candle=now.replace(minute=0,second=0,microsecond=0)+timedelta(minutes=minute)
+        nxt=now.replace(minute=0,second=0,microsecond=0)+timedelta(minutes=minute)
 
-    prepare_seconds=int((next_candle-now).total_seconds())
+    prepare=int((nxt-now).total_seconds())
 
-    return next_candle.strftime("%H:%M:%S"),prepare_seconds
+    return nxt.strftime("%H:%M:%S"), prepare
 
-
-# ================= SMART SIGNAL ENGINE =================
+# ================= MAIN ENGINE =================
 
 def generate_signal(pair,timeframe):
 
@@ -137,45 +144,56 @@ def generate_signal(pair,timeframe):
 
         rsi=calculate_rsi(prices)
         trend=get_trend(prices)
-        strength=candle_strength(prices)
+        strength=market_strength(prices)
+        mom=momentum(prices)
 
-        # ================= SIGNAL LOGIC =================
+        # ================= DIRECTION (USER DECISION) =================
 
-        if rsi<=35:
-            signal="CALL 📈"
-
-        elif rsi>=65:
-            signal="PUT 📉"
-
+        if rsi < 50:
+            direction="CALL 📈"
         else:
-            signal="CALL 📈" if trend=="UP" else "PUT 📉"
+            direction="PUT 📉"
 
-        # ================= ENTRY TIME =================
+        # ================= CONFIDENCE =================
 
-        entry_time,prepare=get_entry_time(timeframe)
+        confidence=round(50 + abs(50-rsi)/1.5)
 
-        accuracy=f"{round(78+abs(50-rsi)/3,1)}%"
+        # ================= ENTRY =================
+
+        entry_time, prepare = get_entry_time(timeframe)
+
+        # ================= FINAL MESSAGE =================
+
+        message=f"""
+📊 AI MARKET ANALYSIS
+
+Pair: {pair}
+Price: {price}
+
+📉 RSI: {rsi}
+📈 Trend: {trend}
+⚡ Momentum: {mom}
+🔥 Strength: {strength}
+
+🎯 Confidence: {confidence}%
+
+⏳ Prepare: {prepare}s
+⏱ Entry: {entry_time}
+
+📌 Direction: {direction}
+
+⚠️ Final Decision: YOU
+"""
 
         return {
             "status":"success",
             "pair":pair,
-            "signal":f"""
-📊 PAIR: {pair}
-💰 Price: {price}
-📉 RSI: {rsi}
-📈 Trend: {trend}
-⚡ Strength: {strength}
-
-⏳ Prepare: {prepare}s
-⏱ Enter At: {entry_time}
-
-🔥 SIGNAL: {signal}
-""",
+            "signal":message,
             "timeframe":timeframe,
             "entry_time":entry_time,
-            "accuracy":accuracy
+            "accuracy":f"{confidence}%"
         }
 
     except Exception as e:
-        print("ENGINE ERROR:",e)
+        print("ENGINE ERROR:", e)
         return {"status":"error"}
