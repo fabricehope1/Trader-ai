@@ -3,10 +3,14 @@ import json
 import os
 import time
 from threading import Thread
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from telebot.types import ReplyKeyboardMarkup
+
 from pro_engine import generate_signal, PAIRS, get_prices
 
 TOKEN=os.getenv("BOT_TOKEN")
+
 ADMIN_ID=8448217655
 
 bot=telebot.TeleBot(TOKEN)
@@ -28,17 +32,7 @@ def load_users():
 def save_users(data):
     json.dump(data,open("users.json","w"))
 
-def load_stats():
-    try:
-        return json.load(open("stats.json"))
-    except:
-        return {}
-
-def save_stats(data):
-    json.dump(data,open("stats.json","w"))
-
 users=load_users()
-user_stats=load_stats()
 
 # ================= MENUS =================
 
@@ -58,82 +52,6 @@ def back_menu(chat_id,text):
     kb.add("⬅ Back")
     bot.send_message(chat_id,text,reply_markup=kb)
 
-# ================= REAL AUTO TRACKER =================
-
-def auto_tracker(chat_id,pair,signal,timeframe,prepare_seconds):
-
-    try:
-
-        # wait entry time
-        time.sleep(prepare_seconds)
-
-        prices=get_prices(pair,timeframe)
-        if not prices:
-            return
-
-        entry_price=prices[-1]
-
-        tf_seconds={
-            "M1":60,
-            "M5":300,
-            "M15":900
-        }
-
-        # wait candle close
-        time.sleep(tf_seconds.get(timeframe,60))
-
-        prices_after=get_prices(pair,timeframe)
-        if not prices_after:
-            return
-
-        close_price=prices_after[-1]
-
-        if "CALL" in signal:
-            result="WIN" if close_price>entry_price else "LOSS"
-        else:
-            result="WIN" if close_price<entry_price else "LOSS"
-
-        # save stats
-        uid=str(chat_id)
-
-        if uid not in user_stats:
-            user_stats[uid]={"win":0,"loss":0}
-
-        if result=="WIN":
-            user_stats[uid]["win"]+=1
-        else:
-            user_stats[uid]["loss"]+=1
-
-        save_stats(user_stats)
-
-        # user result
-        bot.send_message(chat_id,f"""
-📊 SIGNAL RESULT
-
-Pair: {pair}
-Entry: {entry_price}
-Close: {close_price}
-
-RESULT: {result}
-""")
-
-        # admin live result
-        bot.send_message(ADMIN_ID,f"""
-🔥 USER TRADE RESULT
-
-User: {chat_id}
-Pair: {pair}
-Signal: {signal}
-
-Entry: {entry_price}
-Close: {close_price}
-
-RESULT: {result}
-""")
-
-    except Exception as e:
-        print("TRACKER ERROR:",e)
-
 # ================= START =================
 
 @bot.message_handler(commands=["start"])
@@ -150,7 +68,71 @@ def start(msg):
     save_users(users)
 
     bot.send_message(msg.chat.id,f"Your ID: {msg.chat.id}")
+
     main_menu(msg.chat.id)
+
+# ================= PRO AUTO TRACKER =================
+
+def auto_tracker(chat_id,pair,signal,timeframe,entry_time):
+
+    tz=ZoneInfo("Africa/Kigali")
+
+    # wait real entry time
+    while True:
+        now=datetime.now(tz).strftime("%H:%M:%S")
+        if now>=entry_time:
+            break
+        time.sleep(1)
+
+    prices=get_prices(pair,timeframe)
+    if not prices:
+        return
+
+    entry_price=prices[-1]
+
+    tf_seconds={
+        "M1":60,
+        "M5":300,
+        "M15":900
+    }
+
+    time.sleep(tf_seconds.get(timeframe,60))
+
+    prices_after=get_prices(pair,timeframe)
+    if not prices_after:
+        return
+
+    close_price=prices_after[-1]
+
+    if "CALL" in signal:
+        result="WIN" if close_price>entry_price else "LOSS"
+    else:
+        result="WIN" if close_price<entry_price else "LOSS"
+
+    # USER RESULT
+    bot.send_message(chat_id,f"""
+📊 SIGNAL RESULT
+
+Pair: {pair}
+Entry: {entry_price}
+Close: {close_price}
+
+RESULT: {result}
+""")
+
+    # ADMIN RESULT
+    bot.send_message(ADMIN_ID,f"""
+🔥 USER TRADE RESULT
+
+User: {chat_id}
+Pair: {pair}
+Signal: {signal}
+
+Entry: {entry_price}
+Close: {close_price}
+
+RESULT: {result}
+""")
 
 # ================= MESSAGE HANDLER =================
 
@@ -160,6 +142,7 @@ def messages(msg):
     uid=str(msg.chat.id)
     text=msg.text if msg.content_type=="text" else ""
 
+    # BACK
     if text=="⬅ Back":
         main_menu(msg.chat.id)
         return
@@ -219,8 +202,7 @@ def messages(msg):
         kb.add("M1","M5","M15")
         kb.add("⬅ Back")
 
-        bot.send_message(
-            msg.chat.id,
+        bot.send_message(msg.chat.id,
             f"Pair Selected: {text}\nSelect Timeframe",
             reply_markup=kb)
         return
@@ -232,14 +214,16 @@ def messages(msg):
         pair=user_pair.get(msg.chat.id)
 
         if not pair:
-            bot.send_message(msg.chat.id,"⚠️ Select pair first")
+            bot.send_message(msg.chat.id,"Select pair first")
             return
 
         result=generate_signal(pair,text)
 
-        if result.get("status")=="success":
+        if result.get("status")!="success":
+            bot.send_message(msg.chat.id,"Signal error")
+            return
 
-            message=f"""
+        message=f"""
 📊 AI SIGNAL
 
 Pair: {result['pair']}
@@ -249,24 +233,18 @@ Entry Time: {result['entry_time']}
 Accuracy: {result['accuracy']}
 """
 
-            bot.send_message(msg.chat.id,message)
+        bot.send_message(msg.chat.id,message)
 
-            # extract prepare seconds
-            prepare=int(result['signal'].split("Prepare:")[1].split("s")[0])
-
-            Thread(
-                target=auto_tracker,
-                args=(
-                    msg.chat.id,
-                    result['pair'],
-                    result['signal'],
-                    result['timeframe'],
-                    prepare
-                )
-            ).start()
-
-        else:
-            bot.send_message(msg.chat.id,"⚠️ Signal error")
+        Thread(
+            target=auto_tracker,
+            args=(
+                msg.chat.id,
+                result['pair'],
+                result['signal'],
+                result['timeframe'],
+                result['entry_time']
+            )
+        ).start()
 
         return
 
@@ -277,26 +255,81 @@ Accuracy: {result['accuracy']}
         kb=ReplyKeyboardMarkup(resize_keyboard=True)
         kb.add("📩 Broadcast")
         kb.add("👥 Pending Users")
-        kb.add("📊 Users Results")
         kb.add("⬅ Back")
 
         bot.send_message(msg.chat.id,"ADMIN PANEL",reply_markup=kb)
         return
 
-# ================= USERS RESULTS =================
+# ================= BROADCAST =================
 
-    if text=="📊 Users Results" and msg.chat.id==ADMIN_ID:
+    if text=="📩 Broadcast" and msg.chat.id==ADMIN_ID:
+        waiting_broadcast[msg.chat.id]=True
+        back_menu(msg.chat.id,"Send broadcast message")
+        return
 
-        report="📊 USERS RESULTS\n\n"
+    if msg.chat.id in waiting_broadcast:
 
-        for u,data in user_stats.items():
-            report+=f"""
-User: {u}
-WIN: {data.get('win',0)}
-LOSS: {data.get('loss',0)}
-"""
+        sent=0
 
-        bot.send_message(msg.chat.id,report)
+        for user in users:
+            try:
+                bot.copy_message(
+                    chat_id=user,
+                    from_chat_id=msg.chat.id,
+                    message_id=msg.message_id
+                )
+                sent+=1
+            except:
+                pass
+
+        bot.send_message(msg.chat.id,f"Broadcast sent to {sent} users")
+
+        waiting_broadcast.pop(msg.chat.id)
+        main_menu(msg.chat.id)
+        return
+
+# ================= PENDING USERS =================
+
+    if text=="👥 Pending Users" and msg.chat.id==ADMIN_ID:
+
+        pending=[u for u,d in users.items() if not d["approved"]]
+
+        if not pending:
+            bot.send_message(msg.chat.id,"No pending users")
+            return
+
+        kb=ReplyKeyboardMarkup(resize_keyboard=True)
+
+        for u in pending:
+            kb.add(f"✅ Approve {u}")
+            kb.add(f"❌ Reject {u}")
+
+        kb.add("⬅ Back")
+
+        bot.send_message(msg.chat.id,"Pending Users",reply_markup=kb)
+        return
+
+# ================= APPROVE =================
+
+    if text.startswith("✅ Approve") and msg.chat.id==ADMIN_ID:
+
+        user=text.split(" ")[2]
+
+        users[user]["approved"]=True
+        save_users(users)
+
+        bot.send_message(user,"✅ Payment Approved")
+        bot.send_message(msg.chat.id,f"Approved {user}")
+        return
+
+# ================= REJECT =================
+
+    if text.startswith("❌ Reject") and msg.chat.id==ADMIN_ID:
+
+        user=text.split(" ")[2]
+
+        bot.send_message(user,"❌ Payment Rejected")
+        bot.send_message(msg.chat.id,f"Rejected {user}")
         return
 
 # ================= PAYMENT PROOF =================
@@ -309,7 +342,7 @@ LOSS: {data.get('loss',0)}
             msg.message_id
         )
 
-        bot.send_message(msg.chat.id,"✅ Proof sent to admin")
+        bot.send_message(msg.chat.id,"Proof sent to admin")
 
         waiting_payment.pop(uid)
         return
