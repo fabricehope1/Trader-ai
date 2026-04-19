@@ -133,7 +133,7 @@ def messages(msg):
     if text=="📊 Get Signal":
         
         # AUTO ADMIN ACCESS (ADD ONLY)
-if msg.chat.id==ADMIN_ID:
+        if msg.chat.id==ADMIN_ID:
     users[str(msg.chat.id)]={"approved":True}
     save_users(users)
 
