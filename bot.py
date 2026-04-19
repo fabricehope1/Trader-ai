@@ -284,6 +284,7 @@ Accuracy: {result['accuracy']}
         kb.add("📊 BOT STATISTICS")
         kb.add("📩 Broadcast")
         kb.add("👥 Pending Users")
+        kb.add("👤 All Users")
         kb.add("⬅ Back")
 
         bot.send_message(msg.chat.id,"ADMIN PANEL",reply_markup=kb)
@@ -397,6 +398,35 @@ LOSS: {admin_loss}
         bot.send_message(msg.chat.id,"Proof sent to admin")
 
         waiting_payment.pop(uid)
+        return
+
+# ================= ALL USERS =================
+
+    if text=="👤 All Users" and msg.chat.id==ADMIN_ID:
+
+        vip=[]
+        nonvip=[]
+
+        for uid,data in users.items():
+            if data.get("approved"):
+                vip.append(uid)
+            else:
+                nonvip.append(uid)
+
+        message=f"""
+👥 USERS LIST
+
+✅ VIP USERS: {len(vip)}
+❌ NON VIP USERS: {len(nonvip)}
+
+------ VIP ------
+{" ".join(vip) if vip else "None"}
+
+------ NON VIP ------
+{" ".join(nonvip) if nonvip else "None"}
+"""
+
+        bot.send_message(msg.chat.id,message)
         return
 
 # ================= START BOT =================
