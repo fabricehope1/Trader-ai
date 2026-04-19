@@ -9,7 +9,7 @@ from telebot.types import ReplyKeyboardMarkup
 
 from pro_engine import generate_signal, PAIRS, get_prices
 
-TOKEN=os.getenv("BOT_TOKEN")
+TOKEN=os.getenv("8448217655")
 
 ADMIN_ID=8448217655
 
