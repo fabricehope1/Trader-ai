@@ -130,29 +130,30 @@ def messages(msg):
 
 # ================= SIGNAL =================
 
-    if text=="📊 Get Signal":
-        
-        # AUTO ADMIN ACCESS (ADD ONLY)
-        if msg.chat.id==ADMIN_ID:
-    users[str(msg.chat.id)]={"approved":True}
-    save_users(users)
+if text=="📊 Get Signal":
 
-        if uid not in users:
-            users[uid]={"approved":False}
+    # AUTO ADMIN ACCESS (ADD ONLY)
+    if msg.chat.id==ADMIN_ID:
+        users[str(msg.chat.id)]={"approved":True}
+        save_users(users)
 
-        if not users[uid]["approved"]:
-            bot.send_message(msg.chat.id,"🔒 Access Locked")
-            return
+    if uid not in users:
+        users[uid]={"approved":False}
 
-        kb=ReplyKeyboardMarkup(resize_keyboard=True)
-
-        for p in PAIRS:
-            kb.add(p)
-
-        kb.add("⬅ Back")
-
-        bot.send_message(msg.chat.id,"Select Pair",reply_markup=kb)
+    if not users[uid]["approved"]:
+        bot.send_message(msg.chat.id,"🔒 Access Locked")
         return
+
+    kb=ReplyKeyboardMarkup(resize_keyboard=True)
+
+    for p in PAIRS:
+        kb.add(p)
+
+    kb.add("⬅ Back")
+
+    bot.send_message(msg.chat.id,"Select Pair",reply_markup=kb)
+    return
+
 
 # ================= PAIR =================
 
