@@ -20,6 +20,7 @@ PAYMENT_ADDRESS="0xA7123932DF237A24ad8c251502C169d744dd6D41"
 waiting_broadcast={}
 waiting_payment={}
 user_pair={}
+skip_tracker={}
 
 # ================= DATABASE =================
 
@@ -32,7 +33,17 @@ def load_users():
 def save_users(data):
     json.dump(data,open("users.json","w"))
 
+def load_stats():
+    try:
+        return json.load(open("stats.json"))
+    except:
+        return {"users":{}, "admin":{"win":0,"loss":0}}
+
+def save_stats(data):
+    json.dump(data,open("stats.json","w"))
+
 users=load_users()
+stats=load_stats()
 
 # ================= MENUS =================
 
@@ -71,14 +82,17 @@ def start(msg):
 
     main_menu(msg.chat.id)
 
-# ================= PRO AUTO TRACKER =================
+# ================= AUTO TRACKER =================
 
 def auto_tracker(chat_id,pair,signal,timeframe,entry_time):
 
     tz=ZoneInfo("Africa/Kigali")
 
-    # wait real entry time
     while True:
+        if skip_tracker.get(chat_id):
+            skip_tracker.pop(chat_id)
+            return
+
         now=datetime.now(tz).strftime("%H:%M:%S")
         if now>=entry_time:
             break
@@ -90,13 +104,13 @@ def auto_tracker(chat_id,pair,signal,timeframe,entry_time):
 
     entry_price=prices[-1]
 
-    tf_seconds={
-        "M1":60,
-        "M5":300,
-        "M15":900
-    }
+    tf_seconds={"M1":60,"M5":300,"M15":900}
 
-    time.sleep(tf_seconds.get(timeframe,60))
+    for _ in range(tf_seconds.get(timeframe,60)):
+        if skip_tracker.get(chat_id):
+            skip_tracker.pop(chat_id)
+            return
+        time.sleep(1)
 
     prices_after=get_prices(pair,timeframe)
     if not prices_after:
@@ -109,25 +123,28 @@ def auto_tracker(chat_id,pair,signal,timeframe,entry_time):
     else:
         result="WIN" if close_price<entry_price else "LOSS"
 
-    # USER RESULT
+    uid=str(chat_id)
+
+    # save USER stats
+    if uid not in stats["users"]:
+        stats["users"][uid]={"win":0,"loss":0}
+
+    if result=="WIN":
+        stats["users"][uid]["win"]+=1
+        if chat_id==ADMIN_ID:
+            stats["admin"]["win"]+=1
+    else:
+        stats["users"][uid]["loss"]+=1
+        if chat_id==ADMIN_ID:
+            stats["admin"]["loss"]+=1
+
+    save_stats(stats)
+
+    # USER RESULT ONLY
     bot.send_message(chat_id,f"""
 📊 SIGNAL RESULT
 
 Pair: {pair}
-Entry: {entry_price}
-Close: {close_price}
-
-RESULT: {result}
-""")
-
-    # ADMIN RESULT
-    bot.send_message(ADMIN_ID,f"""
-🔥 USER TRADE RESULT
-
-User: {chat_id}
-Pair: {pair}
-Signal: {signal}
-
 Entry: {entry_price}
 Close: {close_price}
 
@@ -145,6 +162,13 @@ def messages(msg):
     # BACK
     if text=="⬅ Back":
         main_menu(msg.chat.id)
+        return
+
+# ================= SKIP SIGNAL =================
+
+    if text=="⏭ Skip Signal":
+        skip_tracker[msg.chat.id]=True
+        bot.send_message(msg.chat.id,"Signal skipped ✅")
         return
 
 # ================= PAYMENT =================
@@ -223,6 +247,10 @@ def messages(msg):
             bot.send_message(msg.chat.id,"Signal error")
             return
 
+        kb=ReplyKeyboardMarkup(resize_keyboard=True)
+        kb.add("⏭ Skip Signal")
+        kb.add("⬅ Back")
+
         message=f"""
 📊 AI SIGNAL
 
@@ -233,7 +261,7 @@ Entry Time: {result['entry_time']}
 Accuracy: {result['accuracy']}
 """
 
-        bot.send_message(msg.chat.id,message)
+        bot.send_message(msg.chat.id,message,reply_markup=kb)
 
         Thread(
             target=auto_tracker,
@@ -253,11 +281,35 @@ Accuracy: {result['accuracy']}
     if text=="⚙ ADMIN PANEL" and msg.chat.id==ADMIN_ID:
 
         kb=ReplyKeyboardMarkup(resize_keyboard=True)
+        kb.add("📊 BOT STATISTICS")
         kb.add("📩 Broadcast")
         kb.add("👥 Pending Users")
         kb.add("⬅ Back")
 
         bot.send_message(msg.chat.id,"ADMIN PANEL",reply_markup=kb)
+        return
+
+# ================= BOT STATISTICS =================
+
+    if text=="📊 BOT STATISTICS" and msg.chat.id==ADMIN_ID:
+
+        total_win=sum(u["win"] for u in stats["users"].values())
+        total_loss=sum(u["loss"] for u in stats["users"].values())
+
+        admin_win=stats["admin"]["win"]
+        admin_loss=stats["admin"]["loss"]
+
+        bot.send_message(msg.chat.id,f"""
+📊 GLOBAL BOT STATS
+
+USERS TOTAL
+WIN: {total_win}
+LOSS: {total_loss}
+
+👑 ADMIN STATS
+WIN: {admin_win}
+LOSS: {admin_loss}
+""")
         return
 
 # ================= BROADCAST =================
@@ -353,4 +405,4 @@ bot.infinity_polling(
     timeout=60,
     long_polling_timeout=60,
     skip_pending=True
-    )
+)
