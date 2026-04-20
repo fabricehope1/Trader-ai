@@ -354,7 +354,7 @@ def session_manager():
 
     TZ = ZoneInfo("Africa/Kigali")
 
-    SESSION_START="11:12"
+    SESSION_START="11:10"
 
     SIGNAL_COUNT=5
     SIGNAL_INTERVAL=10   # minutes hagati ya signals
