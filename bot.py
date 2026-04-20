@@ -352,7 +352,7 @@ def broadcast_all(message):
 
 def session_manager():
 
-    SESSIONS=["09:30","10:00","15:00"]
+    SESSIONS=["10:40","12:00","15:00"]
 
     triggered=set()
 
