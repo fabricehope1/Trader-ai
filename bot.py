@@ -352,35 +352,101 @@ def broadcast_all(message):
 
 def session_manager():
 
-    SESSIONS=["10:40","12:00","15:00"]
+    TZ = ZoneInfo("Africa/Kigali")
 
-    triggered=set()
+    SESSION_START="11:00"
+
+    SIGNAL_COUNT=5
+    SIGNAL_INTERVAL=10   # minutes hagati ya signals
+
+    ready_sent=False
+    session_started=False
 
     while True:
 
         now=datetime.now(TZ)
         current=now.strftime("%H:%M")
 
-        for session in SESSIONS:
+        start_dt=datetime.strptime(
+            SESSION_START,"%H:%M"
+        ).replace(
+            year=now.year,
+            month=now.month,
+            day=now.day
+        )
 
-            if current==session and session not in triggered:
+        # ================= SESSION READY =================
+        ready_time=(start_dt-timedelta(minutes=1)).strftime("%H:%M")
 
-                triggered.add(session)
+        if current==ready_time and not ready_sent:
 
-                broadcast_all(f"🚀 SESSION STARTED {session}")
+            bot.send_message(
+                ADMIN_ID,
+                f"⚡ SESSION READY\nSession iratangira saa {SESSION_START}"
+            )
 
-                for _ in range(5):
+            ready_sent=True
 
-                    signal=find_best_pair("M1")
 
-                    if signal:
-                        broadcast_all(signal["signal"])
+        # ================= SESSION START =================
+        if current==SESSION_START and not session_started:
 
-                    time.sleep(600)
+            pair=random.choice(PAIRS)
 
-        time.sleep(20)
+            bot.send_message(
+                ADMIN_ID,
+                f"""
+🚀 SESSION STARTED
 
-threading.Thread(target=session_manager,daemon=True).start()
+📊 Pair Selected: {pair}
+🧠 Market analysis starting...
+"""
+            )
+
+            session_started=True
+
+            # ===== SEND 5 SIGNALS =====
+            for i in range(SIGNAL_COUNT):
+
+                # analysis time (3 min)
+                time.sleep(180)
+
+                signal=generate_signal(pair,"M1")
+
+                if signal["status"]=="success":
+
+                    entry_time=(
+                        datetime.now(TZ)+timedelta(minutes=1)
+                    ).strftime("%H:%M")
+
+                    bot.send_message(
+                        ADMIN_ID,
+                        f"""
+🔥 SESSION SIGNAL {i+1}
+
+Pair: {pair}
+Direction: {signal['signal']}
+Timeframe: M1
+
+🧠 Reason:
+Trend confirmation ✔
+Momentum ✔
+RSI alignment ✔
+
+⏱ ENTRY TIME: {entry_time}
+"""
+                    )
+
+                # next signal after 10 minutes
+                time.sleep(SIGNAL_INTERVAL*60)
+
+        # ================= RESET DAILY =================
+        if current=="00:01":
+            ready_sent=False
+            session_started=False
+
+        time.sleep)
+
 
 # ================= START BOT =================
 
