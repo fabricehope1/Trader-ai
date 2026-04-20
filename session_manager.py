@@ -3,12 +3,17 @@ import random
 import threading
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+
 from pro_engine import generate_signal, PAIRS, get_prices
+
+# ================= SETTINGS =================
 
 TZ = ZoneInfo("Africa/Kigali")
 
 SIGNALS_PER_SESSION = 5
 SIGNAL_INTERVAL = 600   # 10 minutes
+
+SESSION_TIMES = ["15:33", "18:00", "21:00"]
 
 
 # ================= BROADCAST =================
@@ -18,7 +23,7 @@ def send_all(bot, users, message):
         if data.get("approved"):
             try:
                 bot.send_message(int(uid), message)
-            except:
+            except Exception:
                 pass
 
 
@@ -27,13 +32,16 @@ def run_signal_cycle(bot, users):
 
     pair = random.choice(PAIRS)
 
-    send_all(bot, users,
-f"""
+    send_all(
+        bot,
+        users,
+        f"""
 🚀 SESSION STARTED
 
 📊 Pair Selected: {pair}
 🧠 Real Market Analysis running...
-""")
+"""
+    )
 
     # analysis time
     time.sleep(180)
@@ -53,6 +61,7 @@ f"""
 
         entry = prices[-1]
 
+        # expiry
         time.sleep(60)
 
         prices2 = get_prices(pair, "M1")
@@ -64,58 +73,66 @@ f"""
         direction = signal["signal"]
 
         if "CALL" in direction:
-            result = "WIN" if close > entry else "LOSS"
+            result = "WIN ✅" if close > entry else "LOSS ❌"
         else:
-            result = "WIN" if close < entry else "LOSS"
+            result = "WIN ✅" if close < entry else "LOSS ❌"
 
-        send_all(bot, users,
-f"""
+        send_all(
+            bot,
+            users,
+            f"""
 📊 RESULT
 
 Entry: {entry}
 Close: {close}
 
 RESULT: {result}
-""")
+"""
+        )
 
         time.sleep(SIGNAL_INTERVAL)
 
 
 # ================= SESSION MANAGER =================
-def session_manager(bot, users, ADMIN_ID):
+def session_manager(bot, users):
 
-    SESSION_TIMES = ["15:33", "18:00", "21:00"]
-
-    done = set()
-    ready_done = set()
+    done_today = set()
+    ready_alert = set()
 
     while True:
 
         now = datetime.now(TZ)
-        current = now.strftime("%H:%M")
 
         for session in SESSION_TIMES:
 
-            session_time = datetime.strptime(session, "%H:%M").replace(
+            session_time = datetime.strptime(
+                session, "%H:%M"
+            ).replace(
                 year=now.year,
                 month=now.month,
                 day=now.day,
                 tzinfo=TZ
             )
 
-            ready_time = (session_time - timedelta(minutes=1)).strftime("%H:%M")
+            ready_time = session_time - timedelta(minutes=1)
 
-            # READY ALERT
-            if current == ready_time and session not in ready_done:
-
-                send_all(bot, users,
-"⏰ SESSION STARTING SOON\nBe Ready Traders..."
+            # ===== READY ALERT =====
+            if (
+                now >= ready_time
+                and session not in ready_alert
+            ):
+                send_all(
+                    bot,
+                    users,
+                    "⏰ SESSION STARTING SOON\nBe Ready Traders..."
                 )
+                ready_alert.add(session)
 
-                ready_done.add(session)
-
-            # SESSION START
-            if current == session and session not in done:
+            # ===== START SESSION =====
+            if (
+                now >= session_time
+                and session not in done_today
+            ):
 
                 threading.Thread(
                     target=run_signal_cycle,
@@ -123,10 +140,11 @@ def session_manager(bot, users, ADMIN_ID):
                     daemon=True
                 ).start()
 
-                done.add(session)
+                done_today.add(session)
 
-        if current == "00:01":
-            done.clear()
-            ready_done.clear()
+        # reset everyday
+        if now.strftime("%H:%M") == "00:01":
+            done_today.clear()
+            ready_alert.clear()
 
-        time.sleep(10)
+        time.sleep(5)
