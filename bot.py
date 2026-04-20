@@ -569,9 +569,10 @@ def continuous_signals():
 def session_manager():
 
     # ===== SESSION TIMES =====
-    SESSION_TIMES=["09:50"]   # hano niho wahinduye
+    SESSION_TIMES=["09:55"]
 
     sent_sessions=set()
+    prepare_sent=set()
 
     while True:
 
@@ -579,21 +580,25 @@ def session_manager():
         now=datetime.utcnow()+timedelta(hours=2)
         current_time=now.strftime("%H:%M")
 
-        # prepare minute before
-        prepare_time=(now+timedelta(minutes=1)).strftime("%H:%M")
-
         for session in SESSION_TIMES:
 
-            # ===== SESSION PREPARE =====
-            if prepare_time==session and session not in sent_sessions:
+            # ===== SESSION PREPARE (1 min before) =====
+            session_prepare=(
+                datetime.strptime(session,"%H:%M")
+                - timedelta(minutes=1)
+            ).strftime("%H:%M")
+
+            if current_time >= session_prepare and session not in prepare_sent:
 
                 bot.send_message(
                     ADMIN_ID,
                     f"⏰ SESSION ALERT\nSession igiye gutangira saa {session}"
                 )
 
+                prepare_sent.add(session)
+
             # ===== SESSION START =====
-            if current_time==session and session not in sent_sessions:
+            if current_time >= session and session not in sent_sessions:
 
                 pair=random.choice(PAIRS)
 
@@ -607,7 +612,7 @@ def session_manager():
 """
                 )
 
-                # tegereza analysis minutes
+                # tegereza analysis (3 minutes)
                 time.sleep(180)
 
                 signal=generate_signal(pair,"M1")
@@ -620,8 +625,9 @@ def session_manager():
         # reset buri munsi
         if current_time=="00:01":
             sent_sessions.clear()
+            prepare_sent.clear()
 
-        time.sleep(10)
+        time.sleep(5)
 
 # ===== START AUTO SYSTEM =====
 
