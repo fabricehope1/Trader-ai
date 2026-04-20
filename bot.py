@@ -350,11 +350,9 @@ def broadcast_all(message):
             except:
                 pass
 
-import threading
-
 threading.Thread(
     target=session_manager,
-    args=(bot, ADMIN_ID),
+    args=(bot, users),
     daemon=True
 ).start()
 
