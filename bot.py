@@ -578,6 +578,63 @@ threading.Thread(
     daemon=True
 ).start()
 
+def session_manager():
+
+    # ===== SESSION TIMES =====
+    SESSION_TIMES=["09:40"]   # hano niho wahinduye
+
+    sent_sessions=set()
+
+    while True:
+
+        # Kigali Time
+        now=datetime.utcnow()+timedelta(hours=2)
+        current_time=now.strftime("%H:%M")
+
+        # prepare minute before
+        prepare_time=(now+timedelta(minutes=1)).strftime("%H:%M")
+
+        for session in SESSION_TIMES:
+
+            # ===== SESSION PREPARE =====
+            if prepare_time==session and session not in sent_sessions:
+
+                bot.send_message(
+                    ADMIN_ID,
+                    f"⏰ SESSION ALERT\nSession igiye gutangira saa {session}"
+                )
+
+            # ===== SESSION START =====
+            if current_time==session and session not in sent_sessions:
+
+                pair=random.choice(PAIRS)
+
+                bot.send_message(
+                    ADMIN_ID,
+                    f"""
+🚀 SESSION STARTED
+
+📊 Pair: {pair}
+🧠 Bot irimo gukora REAL MARKET analysis...
+"""
+                )
+
+                # tegereza analysis minutes
+                time.sleep(180)
+
+                signal=generate_signal(pair,"M1")
+
+                if signal["status"]=="success":
+                    bot.send_message(ADMIN_ID,signal["signal"])
+
+                sent_sessions.add(session)
+
+        # reset buri munsi
+        if current_time=="00:01":
+            sent_sessions.clear()
+
+        time.sleep(10)
+
 # ================= START BOT =================
 
 bot.infinity_polling(
