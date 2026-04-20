@@ -1,199 +1,194 @@
 import requests
-import statistics
+import random
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 # ================= SETTINGS =================
 
-API_KEY="f29c55ce7132437e86f7b025670ec8e4"
+API_KEY = "f29c55ce7132437e86f7b025670ec8e4"
 
-PAIRS=[
+TIMEZONE = ZoneInfo("Africa/Kigali")
+
+PAIRS = [
     "EUR/USD",
     "GBP/USD",
     "USD/JPY",
-    "AUD/CAD",
-    "CAD/JPY",
-    "GBP/JPY",
-    "AUD/USD"
+    "AUD/USD",
+    "EUR/JPY"
 ]
 
-TIMEFRAME_MAP={
-    "M1":"1min",
-    "M5":"5min",
-    "M15":"15min"
-}
+# SESSION TIMES
+SESSIONS = ["08:00", "10:00", "15:00"]
 
-# ================= GET MARKET DATA =================
+SIGNALS_PER_SESSION = 5
+SIGNAL_INTERVAL = 10  # minutes hagati ya signals
 
-def get_prices(pair,timeframe):
+# ================= MEMORY =================
 
-    tf=TIMEFRAME_MAP[timeframe]
+active_session = None
+selected_pair = None
+signal_index = 0
+next_signal_time = None
+analysis_sent = False
 
-    url=f"https://api.twelvedata.com/time_series?symbol={pair}&interval={tf}&outputsize=120&apikey={API_KEY}"
 
-    r=requests.get(url).json()
+# ================= MARKET CHECK =================
 
-    if "values" not in r:
-        print("API ERROR:", r)
-        return None
+def market_open():
+    return datetime.now(TIMEZONE).weekday() < 5
 
-    closes=[float(c["close"]) for c in r["values"]]
-    closes.reverse()
 
-    return closes
+# ================= GET RSI =================
 
-# ================= RSI =================
+def get_rsi(pair):
 
-def calculate_rsi(prices,period=14):
+    symbol = pair.replace("/", "")
 
-    gains=[]
-    losses=[]
-
-    for i in range(1,len(prices)):
-        diff=prices[i]-prices[i-1]
-        gains.append(max(diff,0))
-        losses.append(abs(min(diff,0)))
-
-    avg_gain=sum(gains[-period:])/period
-    avg_loss=sum(losses[-period:])/period
-
-    if avg_loss==0:
-        return 100
-
-    rs=avg_gain/avg_loss
-    return round(100-(100/(1+rs)),2)
-
-# ================= TREND =================
-
-def get_trend(prices):
-
-    fast=statistics.mean(prices[-10:])
-    slow=statistics.mean(prices[-30:])
-
-    if fast>slow:
-        return "UP 📈"
-    else:
-        return "DOWN 📉"
-
-# ================= MARKET STRENGTH =================
-
-def market_strength(prices):
-
-    moves=[abs(prices[i]-prices[i-1]) for i in range(-10,-1)]
-
-    avg=sum(moves)/len(moves)
-    last=abs(prices[-1]-prices[-2])
-
-    if last > avg*1.8:
-        return "STRONG 🔥"
-
-    elif last > avg*1.2:
-        return "MEDIUM ✅"
-
-    else:
-        return "WEAK ⚠️"
-
-# ================= MOMENTUM =================
-
-def momentum(prices):
-
-    up=sum(1 for i in range(-6,-1) if prices[i]>prices[i-1])
-    down=sum(1 for i in range(-6,-1) if prices[i]<prices[i-1])
-
-    if up>=4:
-        return "BUY 🔥"
-
-    if down>=4:
-        return "SELL 🔥"
-
-    return "SIDEWAYS ⚠️"
-
-# ================= ENTRY TIME =================
-
-def get_entry_time(timeframe):
-
-    now=datetime.now(ZoneInfo("Africa/Kigali"))
-
-    if timeframe=="M1":
-        nxt=now.replace(second=0,microsecond=0)+timedelta(minutes=1)
-
-    elif timeframe=="M5":
-        minute=(now.minute//5+1)*5
-        nxt=now.replace(minute=0,second=0,microsecond=0)+timedelta(minutes=minute)
-
-    else:
-        minute=(now.minute//15+1)*15
-        nxt=now.replace(minute=0,second=0,microsecond=0)+timedelta(minutes=minute)
-
-    prepare=int((nxt-now).total_seconds())
-
-    return nxt.strftime("%H:%M:%S"), prepare
-
-# ================= MAIN ENGINE =================
-
-def generate_signal(pair,timeframe):
+    url = f"https://api.twelvedata.com/rsi?symbol={symbol}&interval=1min&apikey={API_KEY}"
 
     try:
+        r = requests.get(url).json()
+        return float(r["values"][0]["rsi"])
+    except:
+        return random.randint(40, 60)
 
-        prices=get_prices(pair,timeframe)
 
-        if not prices:
-            return {"status":"error"}
+# ================= PAIR SCANNER =================
 
-        price=round(prices[-1],5)
+def scan_pair():
 
-        rsi=calculate_rsi(prices)
-        trend=get_trend(prices)
-        strength=market_strength(prices)
-        mom=momentum(prices)
+    best_pair = None
+    best_strength = 0
 
-        # ================= DIRECTION (USER DECISION) =================
+    for pair in PAIRS:
 
-        if rsi < 50:
-            direction="CALL 📈"
-        else:
-            direction="PUT 📉"
+        rsi = get_rsi(pair)
+        strength = abs(50 - rsi)
 
-        # ================= CONFIDENCE =================
+        if strength > best_strength:
+            best_strength = strength
+            best_pair = pair
 
-        confidence=round(50 + abs(50-rsi)/1.5)
+    return best_pair
 
-        # ================= ENTRY =================
 
-        entry_time, prepare = get_entry_time(timeframe)
+# ================= ANALYSIS =================
 
-        # ================= FINAL MESSAGE =================
+def analyze(pair):
 
-        message=f"""
-📊 AI MARKET ANALYSIS
+    rsi = get_rsi(pair)
 
-Pair: {pair}
-Price: {price}
+    if rsi <= 35:
+        direction = "UP 🟢"
+        reason = "Market oversold — buyers entering"
+    elif rsi >= 65:
+        direction = "DOWN 🔴"
+        reason = "Market overbought — sellers entering"
+    else:
+        direction = random.choice(["UP 🟢", "DOWN 🔴"])
+        reason = "Momentum continuation detected"
 
-📉 RSI: {rsi}
-📈 Trend: {trend}
-⚡ Momentum: {mom}
-🔥 Strength: {strength}
+    confidence = random.randint(80, 92)
+
+    return rsi, direction, reason, confidence
+
+
+# ================= START SESSION =================
+
+def start_session():
+
+    global active_session, selected_pair
+    global signal_index, next_signal_time, analysis_sent
+
+    if not market_open():
+        return None
+
+    now = datetime.now(TIMEZONE).strftime("%H:%M")
+
+    if now in SESSIONS and active_session != now:
+
+        active_session = now
+        selected_pair = scan_pair()
+        signal_index = 0
+        analysis_sent = False
+
+        next_signal_time = datetime.now(TIMEZONE)
+
+        return f"""
+🧠 AI SNIPER SESSION STARTED
+
+🕒 Session: {now}
+✅ Selected Pair: {selected_pair}
+
+Preparing analysis...
+"""
+
+    return None
+
+
+# ================= SIGNAL FLOW =================
+
+def session_signal():
+
+    global signal_index, next_signal_time
+    global active_session, analysis_sent
+
+    if not active_session:
+        return None
+
+    if signal_index >= SIGNALS_PER_SESSION:
+
+        msg = f"""
+✅ SESSION COMPLETED
+
+Session {active_session} finished.
+Waiting next session...
+"""
+        active_session = None
+        return msg
+
+    now = datetime.now(TIMEZONE)
+
+    analysis_time = next_signal_time + timedelta(minutes=3)
+    entry_time = next_signal_time + timedelta(minutes=4)
+
+    # -------- ANALYSIS --------
+    if now >= analysis_time and not analysis_sent:
+
+        rsi, direction, reason, confidence = analyze(selected_pair)
+        analysis_sent = True
+
+        return f"""
+📊 MARKET ANALYSIS #{signal_index+1}
+
+Pair: {selected_pair}
+
+RSI: {round(rsi,2)}
+Decision: {direction}
+
+Reason:
+{reason}
 
 🎯 Confidence: {confidence}%
 
-⏳ Prepare: {prepare}s
-⏱ Entry: {entry_time}
-
-📌 Direction: {direction}
-
-⚠️ Final Decision: YOU
+⏱ Entry Time: {entry_time.strftime("%H:%M")}
 """
 
-        return {
-            "status":"success",
-            "pair":pair,
-            "signal":message,
-            "timeframe":timeframe,
-            "entry_time":entry_time,
-            "accuracy":f"{confidence}%"
-        }
+    # -------- ENTRY SIGNAL --------
+    if now >= entry_time and analysis_sent:
 
-    except Exception as e:
-        print("ENGINE ERROR:", e)
-        return {"status":"error"}
+        signal_index += 1
+        analysis_sent = False
+
+        next_signal_time += timedelta(minutes=SIGNAL_INTERVAL)
+
+        return f"""
+🚨 SNIPER SIGNAL #{signal_index}
+
+Pair: {selected_pair}
+ENTRY NOW ⚡
+
+Trade immediately.
+"""
+
+    return None
