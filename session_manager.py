@@ -9,7 +9,7 @@ from pro_engine import generate_signal, PAIRS, get_prices
 
 TZ = ZoneInfo("Africa/Kigali")
 
-SESSION_TIMES = ["16:06", "18:00", "21:00"]
+SESSION_TIMES = ["16:10", "18:00", "21:00"]
 
 
 # ================= BROADCAST =================
