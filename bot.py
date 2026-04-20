@@ -568,7 +568,7 @@ def continuous_signals():
 
 def session_manager():
 
-    SESSION_TIMES=["10:10"]   # shyiramo igihe ushaka
+    SESSION_TIMES=["10:15"]   # shyiramo igihe ushaka
 
     sent_sessions=set()
     prepare_sent=set()
