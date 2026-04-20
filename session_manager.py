@@ -2,7 +2,6 @@ import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-# ENGINE YAWE
 from pro_engine import generate_signal, PAIRS, get_prices
 
 TZ = ZoneInfo("Africa/Kigali")
@@ -24,19 +23,43 @@ def send_all(bot, message):
 
 
 # ================= RESULT CHECK =================
-def check_result(pair, entry_price):
+def check_result(pair, entry_price, direction):
 
     prices = get_prices(pair, "M1")
 
     if not prices:
-        return "UNKNOWN"
+        return "UNKNOWN", entry_price
 
     close_price = prices[-1]
 
-    if close_price > entry_price:
-        return "WIN ✅", close_price
+    if direction == "CALL":
+        result = "WIN ✅" if close_price > entry_price else "LOSS ❌"
     else:
-        return "LOSS ❌", close_price
+        result = "WIN ✅" if close_price < entry_price else "LOSS ❌"
+
+    return result, close_price
+
+
+# ================= SCAN ALL PAIRS =================
+def get_best_signal():
+
+    best_signal = None
+    best_confidence = 0
+
+    for pair in PAIRS:
+
+        result = generate_signal(pair, "M1")
+
+        if result["status"] != "success":
+            continue
+
+        confidence = result.get("confidence", 50)
+
+        if confidence > best_confidence:
+            best_confidence = confidence
+            best_signal = result
+
+    return best_signal
 
 
 # ================= ONE SIGNAL =================
@@ -44,43 +67,39 @@ def run_single_signal(bot, number, used_pairs):
 
     send_all(
         bot,
-        f"🧠 Analysis #{number}\nAI scanning ALL pairs..."
+        f"🧠 Analysis #{number}\nScanning ALL pairs..."
     )
 
     signal = None
 
-    # AI ikomeza gushaka setup nziza
+    # wait strong setup
     while signal is None:
 
-        for pair in PAIRS:
+        best = get_best_signal()
 
-            if pair in used_pairs:
-                continue
+        if best and best["pair"] not in used_pairs:
+            signal = best
+            used_pairs.append(best["pair"])
+        else:
+            send_all(bot, "⚠️ No strong setup... waiting better market")
+            time.sleep(20)
 
-            result = generate_signal(pair, "M1")
-
-            if result["status"] == "success":
-
-                signal = result
-                used_pairs.append(pair)
-                break
-
-        if signal is None:
-            send_all(bot, "⚠️ Market weak... waiting better setup")
-            time.sleep(15)
-
-    # ================= SIGNAL =================
+    # ===== SEND SIGNAL =====
     send_all(bot, signal["signal"])
 
     pair = signal["pair"]
+    direction = signal["direction"]
 
     prices = get_prices(pair, "M1")
+    if not prices:
+        return
+
     entry_price = prices[-1]
 
-    # wait entry candle
+    # wait expiry candle
     time.sleep(60)
 
-    result, close_price = check_result(pair, entry_price)
+    result, close_price = check_result(pair, entry_price, direction)
 
     send_all(
         bot,
@@ -109,13 +128,13 @@ def run_signal_cycle(bot):
         run_single_signal(bot, i, used_pairs)
 
         if i < SIGNALS_PER_SESSION:
-            time.sleep(60)  # next analysis after result
+            time.sleep(60)
 
 
 # ================= SESSION MANAGER =================
 def session_manager(bot):
 
-    SESSION_TIMES = ["18:57", "20:00", "21:00"]
+    SESSION_TIMES = ["19:05", "20:00", "21:00"]
 
     done = set()
 
@@ -135,22 +154,24 @@ def session_manager(bot):
 
             warning_time = (session_time - timedelta(minutes=5)).strftime("%H:%M")
 
-            # ⚠️ WARNING
+            # WARNING MESSAGE
             if current == warning_time and session not in done:
-                send_all(bot,
+                send_all(
+                    bot,
 """
 ⚠️ SESSION STARTING IN 5 MINUTES
 Prepare your account...
-""")
+"""
+                )
 
-            # 🚀 START SESSION
+            # START SESSION
             if current == session and session not in done:
 
                 run_signal_cycle(bot)
 
                 done.add(session)
 
-        # reset daily
+        # reset everyday
         if current == "00:01":
             done.clear()
 
