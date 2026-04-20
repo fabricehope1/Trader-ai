@@ -354,96 +354,66 @@ def session_manager():
 
     TZ = ZoneInfo("Africa/Kigali")
 
-    SESSION_START="11:10"
+    SESSION_TIMES = ["11:00"]   # hindura igihe ushaka
 
-    SIGNAL_COUNT=5
-    SIGNAL_INTERVAL=10   # minutes hagati ya signals
-
-    ready_sent=False
-    session_started=False
+    sent_sessions = set()
+    prepare_sent = set()
 
     while True:
 
-        now=datetime.now(TZ)
-        current=now.strftime("%H:%M")
+        now = datetime.now(TZ)
 
-        start_dt=datetime.strptime(
-            SESSION_START,"%H:%M"
-        ).replace(
-            year=now.year,
-            month=now.month,
-            day=now.day
-        )
+        for session in SESSION_TIMES:
 
-        # ================= SESSION READY =================
-        ready_time=(start_dt-timedelta(minutes=1)).strftime("%H:%M")
+            sh, sm = map(int, session.split(":"))
 
-        if current==ready_time and not ready_sent:
-
-            bot.send_message(
-                ADMIN_ID,
-                f"⚡ SESSION READY\nSession iratangira saa {SESSION_START}"
+            session_time = now.replace(
+                hour=sh,
+                minute=sm,
+                second=0,
+                microsecond=0
             )
 
-            ready_sent=True
+            prepare_time = session_time - timedelta(minutes=1)
 
+            # ===== PRE ALERT =====
+            if now >= prepare_time and session not in prepare_sent:
 
-        # ================= SESSION START =================
-        if current==SESSION_START and not session_started:
+                bot.send_message(
+                    ADMIN_ID,
+                    f"⏰ SESSION READY\nSession itangira saa {session}"
+                )
 
-            pair=random.choice(PAIRS)
+                prepare_sent.add(session)
 
-            bot.send_message(
-                ADMIN_ID,
-                f"""
+            # ===== SESSION START =====
+            if now >= session_time and session not in sent_sessions:
+
+                pair = random.choice(PAIRS)
+
+                bot.send_message(
+                    ADMIN_ID,
+                    f"""
 🚀 SESSION STARTED
 
-📊 Pair Selected: {pair}
-🧠 Market analysis starting...
+📊 Pair: {pair}
+🧠 Real Market Analysis iri gukorwa...
 """
-            )
+                )
 
-            session_started=True
-
-            # ===== SEND 5 SIGNALS =====
-            for i in range(SIGNAL_COUNT):
-
-                # analysis time (3 min)
                 time.sleep(180)
 
-                signal=generate_signal(pair,"M1")
+                signal = generate_signal(pair,"M1")
 
                 if signal["status"]=="success":
+                    bot.send_message(ADMIN_ID, signal["signal"])
 
-                    entry_time=(
-                        datetime.now(TZ)+timedelta(minutes=1)
-                    ).strftime("%H:%M")
+                sent_sessions.add(session)
 
-                    bot.send_message(
-                        ADMIN_ID,
-                        f"""
-🔥 SESSION SIGNAL {i+1}
-
-Pair: {pair}
-Direction: {signal['signal']}
-Timeframe: M1
-
-🧠 Reason:
-Trend confirmation ✔
-Momentum ✔
-RSI alignment ✔
-
-⏱ ENTRY TIME: {entry_time}
-"""
-                    )
-
-                # next signal after 10 minutes
-                time.sleep(SIGNAL_INTERVAL*60)
-
-        # ================= RESET DAILY =================
-        if current=="00:01":
-            ready_sent=False
-            session_started=False
+        # reset buri munsi
+        if now.strftime("%H:%M")=="00:01":
+            sent_sessions.clear()
+            prepare_sent.clear()
 
         time.sleep(10)
 
