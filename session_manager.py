@@ -1,148 +1,110 @@
 import time
+import random
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+from pro_engine import generate_signal, PAIRS, get_prices
 
-# ENGINE
-from pro_engine import generate_signal, PAIRS
+TZ = ZoneInfo("Africa/Kigali")
 
+SIGNALS_PER_SESSION = 5
 
-# ==============================
-# FIND BEST PAIR (REAL ANALYSIS)
-# ==============================
-def find_best_pair():
-
-    best_pair = None
-    best_score = 0
-    best_signal = None
-
-    for pair in PAIRS:
-
-        try:
-            result = generate_signal(pair, "M1")
-
-            if result["status"] != "success":
-                continue
-
-            score = result.get("score", 50)
-
-            if score > best_score:
-                best_score = score
-                best_pair = pair
-                best_signal = result
-
-        except Exception as e:
-            print("Scan error:", e)
-
-    return best_pair, best_signal
+def send_all(bot,message):
+    from bot import users
+    for uid,data in users.items():
+        if data.get("approved"):
+            try:
+                bot.send_message(int(uid),message)
+            except:
+                pass
 
 
-# ==============================
-# SESSION MANAGER
-# ==============================
-def session_manager(bot, ADMIN_ID):
+def run_signal_cycle(bot):
 
-    # igihe session itangira
-    SESSION_TIME = "15:00"
+    pair=random.choice(PAIRS)
 
-    ready_sent = False
-    started = False
+    send_all(bot,
+    f"""
+📊 PAIR SELECTED
+{pair}
+
+Market analysis started...
+""")
+
+    time.sleep(180)
+
+    for i in range(SIGNALS_PER_SESSION):
+
+        signal=generate_signal(pair,"M1")
+
+        if signal["status"]!="success":
+            continue
+
+        send_all(bot,signal["signal"])
+
+        prices=get_prices(pair,"M1")
+        entry=prices[-1]
+
+        time.sleep(60)
+
+        prices2=get_prices(pair,"M1")
+        close=prices2[-1]
+
+        result="WIN" if close>entry else "LOSS"
+
+        send_all(bot,
+f"""
+📊 RESULT
+
+Entry: {entry}
+Close: {close}
+
+RESULT: {result}
+""")
+
+        # next signal after 10 minutes
+        time.sleep(600)
+
+
+def session_manager(bot,ADMIN_ID):
+
+    SESSION_TIMES=["15:00","18:00","21:00"]
+
+    done=set()
 
     while True:
 
-        now = datetime.now(ZoneInfo("Africa/Kigali"))
-        current_time = now.strftime("%H:%M")
+        now=datetime.now(TZ)
+        current=now.strftime("%H:%M")
 
-        # ================= READY MESSAGE =================
-        ready_time = (
-            datetime.strptime(SESSION_TIME, "%H:%M")
-            - timedelta(minutes=1)
-        ).strftime("%H:%M")
+        for session in SESSION_TIMES:
 
-        if current_time == ready_time and not ready_sent:
-
-            bot.send_message(
-                ADMIN_ID,
-                f"""
-⏰ SESSION READY
-
-Session iratangira saa {SESSION_TIME}
-Bot iri gukora Market Scan...
-"""
+            session_time=datetime.strptime(session,"%H:%M").replace(
+                year=now.year,
+                month=now.month,
+                day=now.day,
+                tzinfo=TZ
             )
 
-            ready_sent = True
+            ready_time=(session_time-timedelta(minutes=1)).strftime("%H:%M")
 
-        # ================= SESSION START =================
-        if current_time == SESSION_TIME and not started:
+            # READY MESSAGE
+            if current==ready_time and session not in done:
 
-            bot.send_message(
-                ADMIN_ID,
-                "🧠 Gutoranya pair nziza ku isoko..."
-            )
-
-            pair, signal = find_best_pair()
-
-            if not pair or not signal:
-                bot.send_message(
-                    ADMIN_ID,
-                    "❌ Ntago habonetse signal nziza."
-                )
-                started = True
-                continue
-
-            bot.send_message(
-                ADMIN_ID,
-                f"""
-🚀 SESSION STARTED
-
-📊 Pair Selected: {pair}
-📈 Direction: {signal['direction']}
-⏱ Timeframe: M1
-
-📊 Reason:
-RSI + Trend + Momentum Confirmed
+                send_all(bot,
 """
-            )
+⏰ SESSION START
+Be Ready Traders...
+""")
 
-            # ===== ENTRY TIME (3 min nyuma)
-            entry_time = (
-                now + timedelta(minutes=3)
-            ).strftime("%H:%M")
+            # SESSION START
+            if current==session and session not in done:
 
-            bot.send_message(
-                ADMIN_ID,
-                f"""
-⌛ ENTRY TIME
+                run_signal_cycle(bot)
 
-Kanda trade saa {entry_time}
-"""
-            )
+                done.add(session)
 
-            # ===== SIGNAL EVERY 10 MINUTES =====
-            for i in range(3):
-
-                time.sleep(600)  # 10 minutes
-
-                pair, signal = find_best_pair()
-
-                if pair and signal:
-
-                    bot.send_message(
-                        ADMIN_ID,
-                        f"""
-🔥 NEW SIGNAL
-
-Pair: {pair}
-Direction: {signal['direction']}
-Timeframe: M1
-"""
-                    )
-
-            started = True
-
-        # ===== RESET EVERYDAY =====
-        if current_time == "00:01":
-            ready_sent = False
-            started = False
+        # reset daily
+        if current=="00:01":
+            done.clear()
 
         time.sleep(10)
