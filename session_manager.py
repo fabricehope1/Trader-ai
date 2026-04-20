@@ -12,7 +12,7 @@ TZ = ZoneInfo("Africa/Kigali")
 SIGNALS_PER_SESSION = 5
 SIGNAL_INTERVAL = 600
 
-SESSION_TIMES = ["15:50", "18:00", "21:00"]
+SESSION_TIMES = ["15:55", "18:00", "21:00"]
 
 
 # ================= BROADCAST =================
