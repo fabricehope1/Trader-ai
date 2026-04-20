@@ -354,7 +354,7 @@ def session_manager():
 
     TZ = ZoneInfo("Africa/Kigali")
 
-    SESSION_TIMES = ["11:00"]   # hindura igihe ushaka
+    SESSION_TIMES = ["14:35"]   # hindura igihe ushaka
 
     sent_sessions = set()
     prepare_sent = set()
@@ -416,6 +416,11 @@ def session_manager():
             prepare_sent.clear()
 
         time.sleep(10)
+
+threading.Thread(
+    target=session_manager,
+    daemon=True
+).start()
 
 
 # ================= START BOT =================
