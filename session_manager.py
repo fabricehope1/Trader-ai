@@ -140,7 +140,7 @@ RESULT: {result}
 # ================= SESSION MANAGER =================
 def session_manager(bot,users):
 
-    SESSION_TIMES=["15:00","18:00","21:00"]
+    SESSION_TIMES=["18:32","19:00","21:00"]
 
     started_today=set()
 
