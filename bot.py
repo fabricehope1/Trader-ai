@@ -354,7 +354,7 @@ def session_manager():
 
     TZ = ZoneInfo("Africa/Kigali")
 
-    SESSION_START="11:00"
+    SESSION_START="11:12"
 
     SIGNAL_COUNT=5
     SIGNAL_INTERVAL=10   # minutes hagati ya signals
@@ -445,7 +445,7 @@ RSI alignment ✔
             ready_sent=False
             session_started=False
 
-        time.sleep)
+        time.sleep(10)
 
 
 # ================= START BOT =================
