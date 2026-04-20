@@ -635,6 +635,11 @@ threading.Thread(
     daemon=True
 ).start()
 
+threading.Thread(
+    target=session_manager,
+    daemon=True
+).start()
+
 # ================= START BOT =================
 
 bot.infinity_polling(
