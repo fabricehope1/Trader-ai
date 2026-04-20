@@ -436,3 +436,145 @@ bot.infinity_polling(
     long_polling_timeout=60,
     skip_pending=True
 )
+
+# ====================================================
+# 🔥 AUTO SESSION SIGNAL SYSTEM (ADDED ONLY)
+# ====================================================
+
+from datetime import timedelta
+import threading
+
+TZ=ZoneInfo("Africa/Kigali")
+
+SESSIONS=[
+    {"hour":9,"minute":30},
+    {"hour":10,"minute":0},
+    {"hour":15,"minute":0}
+]
+
+SIGNALS_PER_SESSION=5
+SIGNAL_INTERVAL=600   # 10 minutes
+
+def broadcast_all(message):
+
+    for uid,data in users.items():
+
+        if data.get("approved"):
+            try:
+                bot.send_message(int(uid),message)
+            except:
+                pass
+
+
+def auto_signal():
+
+    pair=PAIRS[0]   # bot ihitamo pair ya mbere
+    timeframe="M1"
+
+    result=generate_signal(pair,timeframe)
+
+    if result.get("status")!="success":
+        return
+
+    msg=f"""
+🤖 AUTO SESSION SIGNAL
+
+Pair: {result['pair']}
+Signal: {result['signal']}
+Timeframe: {result['timeframe']}
+Entry Time: {result['entry_time']}
+Accuracy: {result['accuracy']}
+
+🧠 Market Analysis:
+AI detected momentum + trend confirmation.
+"""
+
+    broadcast_all(msg)
+
+
+def run_session(session):
+
+    tz=ZoneInfo("Africa/Kigali")
+
+    session_time=datetime.now(tz).replace(
+        hour=session["hour"],
+        minute=session["minute"],
+        second=0,
+        microsecond=0
+    )
+
+    alert_time=session_time-timedelta(minutes=1)
+
+    # ===== PRE ALERT =====
+    while True:
+        now=datetime.now(tz)
+
+        if now>=alert_time and now<session_time:
+            broadcast_all(
+                f"⚡ Session igiye gutangira saa {session_time.strftime('%H:%M')}"
+            )
+            break
+
+        time.sleep(5)
+
+    broadcast_all("🚀 SESSION STARTED")
+
+    # ===== SEND 5 SIGNALS =====
+    for i in range(SIGNALS_PER_SESSION):
+
+        auto_signal()
+
+        time.sleep(SIGNAL_INTERVAL)
+
+    broadcast_all("✅ Session Finished")
+
+
+def session_watcher():
+
+    tz=ZoneInfo("Africa/Kigali")
+
+    triggered=set()
+
+    while True:
+
+        now=datetime.now(tz)
+
+        for s in SESSIONS:
+
+            key=f"{now.date()}_{s['hour']}_{s['minute']}"
+
+            session_time=now.replace(
+                hour=s["hour"],
+                minute=s["minute"],
+                second=0,
+                microsecond=0
+            )
+
+            if now>=session_time and key not in triggered:
+
+                triggered.add(key)
+
+                threading.Thread(
+                    target=run_session,
+                    args=(s,),
+                    daemon=True
+                ).start()
+
+        time.sleep(20)
+
+
+# ===== CONTINUOUS SIGNALS OUTSIDE SESSION =====
+
+def continuous_signals():
+
+    while True:
+
+        auto_signal()
+
+        time.sleep(1800)   # every 30 minutes
+
+
+# ===== START AUTO SYSTEM =====
+
+threading.Thread(target=session_watcher,daemon=True).start()
+threading.Thread(target=continuous_signals,daemon=True).start()
