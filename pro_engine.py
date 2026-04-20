@@ -1,5 +1,6 @@
 import requests
 import statistics
+import random
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -22,6 +23,8 @@ TIMEFRAME_MAP={
     "M5":"5min",
     "M15":"15min"
 }
+
+TZ=ZoneInfo("Africa/Kigali")
 
 # ================= GET MARKET DATA =================
 
@@ -93,19 +96,17 @@ def candle_strength(prices):
 
     if last_move > avg_move*1.8:
         return "STRONG 🔥"
-
     elif last_move > avg_move*1.2:
         return "MEDIUM ✅"
-
     else:
         return "WEAK ⚠️"
 
 
-# ================= ENTRY SYSTEM =================
+# ================= ENTRY TIME =================
 
 def get_entry_time(timeframe):
 
-    now=datetime.now(ZoneInfo("Africa/Kigali"))
+    now=datetime.now(TZ)
 
     if timeframe=="M1":
         next_candle=now.replace(second=0,microsecond=0)+timedelta(minutes=1)
@@ -114,69 +115,138 @@ def get_entry_time(timeframe):
         minute=(now.minute//5+1)*5
         next_candle=now.replace(minute=0,second=0,microsecond=0)+timedelta(minutes=minute)
 
-    elif timeframe=="M15":
+    else:
         minute=(now.minute//15+1)*15
         next_candle=now.replace(minute=0,second=0,microsecond=0)+timedelta(minutes=minute)
 
-    prepare_seconds=int((next_candle-now).total_seconds())
+    prepare=int((next_candle-now).total_seconds())
 
-    return next_candle.strftime("%H:%M:%S"),prepare_seconds
+    return next_candle,prepare
 
 
-# ================= SMART SIGNAL ENGINE =================
+# ================= SIGNAL LOGIC =================
 
-def generate_signal(pair,timeframe):
+def build_signal(pair,timeframe):
+
+    prices=get_prices(pair,timeframe)
+
+    if not prices:
+        return None
+
+    price=round(prices[-1],5)
+
+    rsi=calculate_rsi(prices)
+    trend=get_trend(prices)
+    strength=candle_strength(prices)
+
+    if rsi<=35:
+        direction="CALL 📈"
+        reason="Market Oversold (RSI Low)"
+
+    elif rsi>=65:
+        direction="PUT 📉"
+        reason="Market Overbought (RSI High)"
+
+    else:
+        direction="CALL 📈" if trend=="UP" else "PUT 📉"
+        reason="Trend Confirmation"
+
+    entry_dt,prepare=get_entry_time(timeframe)
+
+    accuracy=f"{round(78+abs(50-rsi)/3,1)}%"
+
+    return {
+        "pair":pair,
+        "direction":direction,
+        "price":price,
+        "rsi":rsi,
+        "trend":trend,
+        "strength":strength,
+        "reason":reason,
+        "prepare":prepare,
+        "entry_dt":entry_dt,
+        "accuracy":accuracy,
+        "timeframe":timeframe
+    }
+
+
+# ================= PUBLIC FUNCTION =================
+
+def generate_signal(pair=None,timeframe="M1"):
 
     try:
 
-        prices=get_prices(pair,timeframe)
+        if pair is None:
+            pair=random.choice(PAIRS)
 
-        if not prices:
+        data=build_signal(pair,timeframe)
+
+        if not data:
             return {"status":"error"}
 
-        price=round(prices[-1],5)
+        msg=f"""
+📊 PAIR: {data['pair']}
+💰 Price: {data['price']}
+📉 RSI: {data['rsi']}
+📈 Trend: {data['trend']}
+⚡ Strength: {data['strength']}
 
-        rsi=calculate_rsi(prices)
-        trend=get_trend(prices)
-        strength=candle_strength(prices)
+🧠 Reason: {data['reason']}
 
-        # ================= SIGNAL LOGIC =================
+⏳ Prepare: {data['prepare']}s
+⏱ Entry: {data['entry_dt'].strftime("%H:%M:%S")}
 
-        if rsi<=35:
-            signal="CALL 📈"
-
-        elif rsi>=65:
-            signal="PUT 📉"
-
-        else:
-            signal="CALL 📈" if trend=="UP" else "PUT 📉"
-
-        # ================= ENTRY TIME =================
-
-        entry_time,prepare=get_entry_time(timeframe)
-
-        accuracy=f"{round(78+abs(50-rsi)/3,1)}%"
+🔥 SIGNAL: {data['direction']}
+🎯 Accuracy: {data['accuracy']}
+"""
 
         return {
             "status":"success",
-            "pair":pair,
-            "signal":f"""
-📊 PAIR: {pair}
-💰 Price: {price}
-📉 RSI: {rsi}
-📈 Trend: {trend}
-⚡ Strength: {strength}
-
-⏳ Prepare: {prepare}s
-⏱ Enter At: {entry_time}
-
-🔥 SIGNAL: {signal}
-""",
-            "timeframe":timeframe,
-            "entry_time":entry_time,
-            "accuracy":accuracy
+            "signal":msg,
+            "pair":data["pair"],
+            "direction":data["direction"],
+            "entry_time":data["entry_dt"],
+            "prepare":data["prepare"],
+            "timeframe":timeframe
         }
 
     except Exception as e:
         print("ENGINE ERROR:",e)
         return {"status":"error"}
+
+
+# ================= RESULT CHECKER =================
+
+def check_result(pair,direction,entry_time,timeframe):
+
+    try:
+
+        tf_seconds={
+            "M1":60,
+            "M5":300,
+            "M15":900
+        }
+
+        wait=tf_seconds[timeframe]
+
+        close_time=entry_time+timedelta(seconds=wait)
+
+        while datetime.now(TZ)<close_time:
+            pass
+
+        prices=get_prices(pair,timeframe)
+
+        if not prices:
+            return "UNKNOWN"
+
+        entry_price=prices[-2]
+        close_price=prices[-1]
+
+        if direction=="CALL 📈":
+            return "WIN ✅" if close_price>entry_price else "LOSS ❌"
+
+        else:
+            return "WIN ✅" if close_price<entry_price else "LOSS ❌"
+
+    except:
+        return "UNKNOWN"
