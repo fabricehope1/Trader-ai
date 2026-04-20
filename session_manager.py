@@ -9,9 +9,6 @@ from pro_engine import generate_signal, PAIRS, get_prices
 
 TZ = ZoneInfo("Africa/Kigali")
 
-SIGNALS_PER_SESSION = 5
-SIGNAL_INTERVAL = 600
-
 SESSION_TIMES = ["15:55", "18:00", "21:00"]
 
 
@@ -26,12 +23,11 @@ def send_all(bot, users, message):
                 pass
 
 
-# ================= SMART PAIR SELECTOR =================
+# ================= SMART PAIR FINDER =================
 def find_best_pair():
 
     best_pair = None
-    best_confidence = 0
-    best_signal = None
+    best_conf = -1
 
     for pair in PAIRS:
 
@@ -40,78 +36,70 @@ def find_best_pair():
         if signal.get("status") != "success":
             continue
 
-        confidence = signal.get("confidence", 0)
+        conf = signal.get("confidence", 50)
 
-        if confidence > best_confidence:
-            best_confidence = confidence
+        if conf > best_conf:
+            best_conf = conf
             best_pair = pair
-            best_signal = signal
 
-    return best_pair, best_signal
+    # fallback → ntizongera kuvuga no opportunity
+    if not best_pair:
+        best_pair = PAIRS[0]
+
+    return best_pair
 
 
-# ================= SIGNAL SESSION =================
-def run_signal_cycle(bot, users):
+# ================= SESSION FLOW =================
+def run_session(bot, users, session_time):
 
-    send_all(
-        bot,
-        users,
-        "🧠 Scanning Market...\nFinding Best Pair..."
-    )
+    # READY (1 minute before)
+    send_all(bot, users,
+    "⏰ SESSION READY\nPrepare Traders...")
 
-    pair, first_signal = find_best_pair()
+    time.sleep(60)
 
-    if not pair:
-        send_all(bot, users, "❌ No strong market opportunity found.")
+    # PAIR SELECTED
+    pair = find_best_pair()
+
+    send_all(bot, users,
+f"""
+📊 Pair Selected: {pair}
+🧠 Market Analysis Running...
+""")
+
+    # wait until signal time (3 min)
+    time.sleep(180)
+
+    # SIGNAL
+    signal = generate_signal(pair, "M1")
+
+    if signal.get("status") != "success":
         return
 
-    send_all(
-        bot,
-        users,
-        f"""
-🚀 SESSION STARTED
+    send_all(bot, users, signal["signal"])
 
-🔥 Best Pair Selected: {pair}
-🎯 High Probability Trade
-"""
-    )
+    prices = get_prices(pair, "M1")
+    if not prices:
+        return
 
-    time.sleep(120)
+    entry = prices[-1]
 
-    for i in range(SIGNALS_PER_SESSION):
+    # expiry 1 minute
+    time.sleep(60)
 
-        signal = generate_signal(pair, "M1")
+    prices2 = get_prices(pair, "M1")
+    if not prices2:
+        return
 
-        if signal.get("status") != "success":
-            continue
+    close = prices2[-1]
 
-        send_all(bot, users, signal["signal"])
+    if "CALL" in signal["signal"]:
+        result = "WIN ✅" if close > entry else "LOSS ❌"
+    else:
+        result = "WIN ✅" if close < entry else "LOSS ❌"
 
-        prices = get_prices(pair, "M1")
-        if not prices:
-            continue
-
-        entry = prices[-1]
-
-        time.sleep(60)
-
-        prices2 = get_prices(pair, "M1")
-        if not prices2:
-            continue
-
-        close = prices2[-1]
-
-        direction = signal["signal"]
-
-        if "CALL" in direction:
-            result = "WIN ✅" if close > entry else "LOSS ❌"
-        else:
-            result = "WIN ✅" if close < entry else "LOSS ❌"
-
-        send_all(
-            bot,
-            users,
-            f"""
+    send_all(bot, users,
+f"""
 📊 RESULT
 
 Pair: {pair}
@@ -119,17 +107,13 @@ Entry: {entry}
 Close: {close}
 
 RESULT: {result}
-"""
-        )
-
-        time.sleep(SIGNAL_INTERVAL)
+""")
 
 
 # ================= SESSION MANAGER =================
 def session_manager(bot, users):
 
-    done_today = set()
-    ready_alert = set()
+    started_today = set()
 
     while True:
 
@@ -137,7 +121,7 @@ def session_manager(bot, users):
 
         for session in SESSION_TIMES:
 
-            session_time = datetime.strptime(
+            session_dt = datetime.strptime(
                 session, "%H:%M"
             ).replace(
                 year=now.year,
@@ -146,31 +130,21 @@ def session_manager(bot, users):
                 tzinfo=TZ
             )
 
-            ready_time = session_time - timedelta(minutes=1)
+            ready_dt = session_dt - timedelta(minutes=1)
 
             # READY ALERT
-            if now >= ready_time and session not in ready_alert:
-                send_all(
-                    bot,
-                    users,
-                    "⏰ SESSION STARTING SOON\nPrepare Traders..."
-                )
-                ready_alert.add(session)
-
-            # START SESSION
-            if now >= session_time and session not in done_today:
+            if now >= ready_dt and session not in started_today:
 
                 threading.Thread(
-                    target=run_signal_cycle,
-                    args=(bot, users),
+                    target=run_session,
+                    args=(bot, users, session),
                     daemon=True
                 ).start()
 
-                done_today.add(session)
+                started_today.add(session)
 
-        # DAILY RESET
+        # reset everyday
         if now.strftime("%H:%M") == "00:01":
-            done_today.clear()
-            ready_alert.clear()
+            started_today.clear()
 
         time.sleep(5)
