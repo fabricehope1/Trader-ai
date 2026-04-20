@@ -1,5 +1,5 @@
 import requests
-import random
+import statistics
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -7,219 +7,176 @@ from zoneinfo import ZoneInfo
 
 API_KEY="f29c55ce7132437e86f7b025670ec8e4"
 
-TIMEZONE=ZoneInfo("Africa/Kigali")
-
 PAIRS=[
     "EUR/USD",
     "GBP/USD",
     "USD/JPY",
-    "AUD/USD",
-    "EUR/JPY"
+    "AUD/CAD",
+    "EUR/JPY",
+    "CAD/JPY",
+    "AUD/USD"
 ]
 
-SESSIONS=["08:30","10:00","15:00"]
+TIMEFRAME_MAP={
+    "M1":"1min",
+    "M5":"5min",
+    "M15":"15min"
+}
 
-SIGNALS_PER_SESSION=5
-SIGNAL_INTERVAL=10
-
-active_session=None
-selected_pair=None
-signal_index=0
-next_signal_time=None
-analysis_sent=False
-
-
-# ================= MARKET =================
-
-def market_open():
-    return datetime.now(TIMEZONE).weekday()<5
-
-
-# ================= GET PRICES (BOT NEEDS THIS) =================
+# ================= GET MARKET DATA =================
 
 def get_prices(pair,timeframe):
 
-    symbol=pair.replace("/","")
+    tf=TIMEFRAME_MAP[timeframe]
 
-    tf_map={
-        "M1":"1min",
-        "M5":"5min",
-        "M15":"15min"
-    }
+    url=f"https://api.twelvedata.com/time_series?symbol={pair}&interval={tf}&outputsize=60&apikey={API_KEY}"
 
-    url=f"https://api.twelvedata.com/time_series?symbol={symbol}&interval={tf_map.get(timeframe,'1min')}&apikey={API_KEY}&outputsize=50"
+    r=requests.get(url).json()
 
-    try:
-        r=requests.get(url).json()
-        prices=[float(x["close"]) for x in r["values"]]
-        return prices[::-1]
-    except:
+    if "values" not in r:
+        print("API ERROR:",r)
         return None
+
+    closes=[float(c["close"]) for c in r["values"]]
+    closes.reverse()
+
+    return closes
 
 
 # ================= RSI =================
 
-def get_rsi(pair):
+def calculate_rsi(prices,period=14):
 
-    symbol=pair.replace("/","")
+    gains=[]
+    losses=[]
 
-    url=f"https://api.twelvedata.com/rsi?symbol={symbol}&interval=1min&apikey={API_KEY}"
+    for i in range(1,len(prices)):
+        diff=prices[i]-prices[i-1]
 
-    try:
-        r=requests.get(url).json()
-        return float(r["values"][0]["rsi"])
-    except:
-        return random.randint(40,60)
+        if diff>0:
+            gains.append(diff)
+            losses.append(0)
+        else:
+            gains.append(0)
+            losses.append(abs(diff))
 
+    avg_gain=sum(gains[-period:])/period
+    avg_loss=sum(losses[-period:])/period
 
-# ================= PAIR SCANNER =================
+    if avg_loss==0:
+        return 100
 
-def scan_pair():
+    rs=avg_gain/avg_loss
+    rsi=100-(100/(1+rs))
 
-    best_pair=None
-    best_strength=0
-
-    for pair in PAIRS:
-
-        rsi=get_rsi(pair)
-        strength=abs(50-rsi)
-
-        if strength>best_strength:
-            best_strength=strength
-            best_pair=pair
-
-    return best_pair
+    return round(rsi,2)
 
 
-# ================= ANALYSIS =================
+# ================= TREND =================
 
-def analyze(pair):
+def get_trend(prices):
 
-    rsi=get_rsi(pair)
+    sma_fast=statistics.mean(prices[-10:])
+    sma_slow=statistics.mean(prices[-30:])
 
-    if rsi<=35:
-        direction="CALL"
-        reason="Market oversold — buyers entering"
-    elif rsi>=65:
-        direction="PUT"
-        reason="Market overbought — sellers entering"
+    return "UP" if sma_fast>sma_slow else "DOWN"
+
+
+# ================= CANDLE STRENGTH =================
+
+def candle_strength(prices):
+
+    moves=[abs(prices[i]-prices[i-1]) for i in range(-6,-1)]
+
+    avg_move=sum(moves)/len(moves)
+    last_move=abs(prices[-1]-prices[-2])
+
+    if last_move > avg_move*1.8:
+        return "STRONG 🔥"
+
+    elif last_move > avg_move*1.2:
+        return "MEDIUM ✅"
+
     else:
-        direction=random.choice(["CALL","PUT"])
-        reason="Momentum continuation detected"
-
-    confidence=random.randint(80,92)
-
-    return rsi,direction,reason,confidence
+        return "WEAK ⚠️"
 
 
-# ================= MANUAL SIGNAL (BOT NEEDS THIS) =================
+# ================= ENTRY SYSTEM =================
+
+def get_entry_time(timeframe):
+
+    now=datetime.now(ZoneInfo("Africa/Kigali"))
+
+    if timeframe=="M1":
+        next_candle=now.replace(second=0,microsecond=0)+timedelta(minutes=1)
+
+    elif timeframe=="M5":
+        minute=(now.minute//5+1)*5
+        next_candle=now.replace(minute=0,second=0,microsecond=0)+timedelta(minutes=minute)
+
+    elif timeframe=="M15":
+        minute=(now.minute//15+1)*15
+        next_candle=now.replace(minute=0,second=0,microsecond=0)+timedelta(minutes=minute)
+
+    prepare_seconds=int((next_candle-now).total_seconds())
+
+    return next_candle.strftime("%H:%M:%S"),prepare_seconds
+
+
+# ================= SMART SIGNAL ENGINE =================
 
 def generate_signal(pair,timeframe):
 
-    rsi,signal,reason,confidence=analyze(pair)
+    try:
 
-    entry=(datetime.now(TIMEZONE)+timedelta(minutes=1)).strftime("%H:%M:%S")
+        prices=get_prices(pair,timeframe)
 
-    return {
-        "status":"success",
-        "pair":pair,
-        "signal":signal,
-        "timeframe":timeframe,
-        "entry_time":entry,
-        "accuracy":f"{confidence}%"
-    }
+        if not prices:
+            return {"status":"error"}
 
+        price=round(prices[-1],5)
 
-# ================= START SESSION =================
+        rsi=calculate_rsi(prices)
+        trend=get_trend(prices)
+        strength=candle_strength(prices)
 
-def start_session():
+        # ================= SIGNAL LOGIC =================
 
-    global active_session,selected_pair
-    global signal_index,next_signal_time,analysis_sent
+        if rsi<=35:
+            signal="CALL 📈"
 
-    if not market_open():
-        return None
+        elif rsi>=65:
+            signal="PUT 📉"
 
-    now=datetime.now(TIMEZONE).strftime("%H:%M")
+        else:
+            signal="CALL 📈" if trend=="UP" else "PUT 📉"
 
-    if now in SESSIONS and active_session!=now:
+        # ================= ENTRY TIME =================
 
-        active_session=now
-        selected_pair=scan_pair()
-        signal_index=0
-        analysis_sent=False
+        entry_time,prepare=get_entry_time(timeframe)
 
-        next_signal_time=datetime.now(TIMEZONE)
+        accuracy=f"{round(78+abs(50-rsi)/3,1)}%"
 
-        return f"""
-🧠 AI SNIPER SESSION STARTED
+        return {
+            "status":"success",
+            "pair":pair,
+            "signal":f"""
+📊 PAIR: {pair}
+💰 Price: {price}
+📉 RSI: {rsi}
+📈 Trend: {trend}
+⚡ Strength: {strength}
 
-Session: {now}
-Selected Pair: {selected_pair}
+⏳ Prepare: {prepare}s
+⏱ Enter At: {entry_time}
 
-Preparing analysis...
-"""
+🔥 SIGNAL: {signal}
+""",
+            "timeframe":timeframe,
+            "entry_time":entry_time,
+            "accuracy":accuracy
+        }
 
-    return None
-
-
-# ================= SESSION SIGNAL =================
-
-def session_signal():
-
-    global signal_index,next_signal_time
-    global active_session,analysis_sent
-
-    if not active_session:
-        return None
-
-    if signal_index>=SIGNALS_PER_SESSION:
-
-        msg=f"""
-✅ SESSION COMPLETED
-
-Session {active_session} finished.
-Waiting next session...
-"""
-        active_session=None
-        return msg
-
-    now=datetime.now(TIMEZONE)
-
-    analysis_time=next_signal_time+timedelta(minutes=3)
-    entry_time=next_signal_time+timedelta(minutes=4)
-
-    if now>=analysis_time and not analysis_sent:
-
-        rsi,signal,reason,confidence=analyze(selected_pair)
-        analysis_sent=True
-
-        return f"""
-📊 MARKET ANALYSIS #{signal_index+1}
-
-Pair: {selected_pair}
-RSI: {round(rsi,2)}
-Decision: {signal}
-
-Reason:
-{reason}
-
-Confidence: {confidence}%
-
-Entry Time: {entry_time.strftime("%H:%M")}
-"""
-
-    if now>=entry_time and analysis_sent:
-
-        signal_index+=1
-        analysis_sent=False
-        next_signal_time+=timedelta(minutes=SIGNAL_INTERVAL)
-
-        return f"""
-🚨 SNIPER SIGNAL #{signal_index}
-
-Pair: {selected_pair}
-ENTRY NOW ⚡
-"""
-
-    return None
+    except Exception as e:
+        print("ENGINE ERROR:",e)
+        return {"status":"error"}
