@@ -2,12 +2,14 @@ import telebot
 import json
 import os
 import time
+import threading
 from threading import Thread
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from telebot.types import ReplyKeyboardMarkup
 
-from pro_engine import generate_signal, PAIRS, get_prices
+# ENGINE
+from pro_engine import generate_signal, PAIRS, get_prices, find_best_pair
 
 TOKEN=os.getenv("BOT_TOKEN")
 
@@ -21,6 +23,8 @@ waiting_broadcast={}
 waiting_payment={}
 user_pair={}
 skip_tracker={}
+
+TZ=ZoneInfo("Africa/Kigali")
 
 # ================= DATABASE =================
 
@@ -79,21 +83,18 @@ def start(msg):
     save_users(users)
 
     bot.send_message(msg.chat.id,f"Your ID: {msg.chat.id}")
-
     main_menu(msg.chat.id)
 
 # ================= AUTO TRACKER =================
 
 def auto_tracker(chat_id,pair,signal,timeframe,entry_time):
 
-    tz=ZoneInfo("Africa/Kigali")
-
     while True:
         if skip_tracker.get(chat_id):
             skip_tracker.pop(chat_id)
             return
 
-        now=datetime.now(tz).strftime("%H:%M:%S")
+        now=datetime.now(TZ).strftime("%H:%M:%S")
         if now>=entry_time:
             break
         time.sleep(1)
@@ -106,11 +107,7 @@ def auto_tracker(chat_id,pair,signal,timeframe,entry_time):
 
     tf_seconds={"M1":60,"M5":300,"M15":900}
 
-    for _ in range(tf_seconds.get(timeframe,60)):
-        if skip_tracker.get(chat_id):
-            skip_tracker.pop(chat_id)
-            return
-        time.sleep(1)
+    time.sleep(tf_seconds.get(timeframe,60))
 
     prices_after=get_prices(pair,timeframe)
     if not prices_after:
@@ -118,29 +115,20 @@ def auto_tracker(chat_id,pair,signal,timeframe,entry_time):
 
     close_price=prices_after[-1]
 
-    if "CALL" in signal:
-        result="WIN" if close_price>entry_price else "LOSS"
-    else:
-        result="WIN" if close_price<entry_price else "LOSS"
+    result="WIN" if ("CALL" in signal and close_price>entry_price) or ("PUT" in signal and close_price<entry_price) else "LOSS"
 
     uid=str(chat_id)
 
-    # save USER stats
     if uid not in stats["users"]:
         stats["users"][uid]={"win":0,"loss":0}
 
-    if result=="WIN":
-        stats["users"][uid]["win"]+=1
-        if chat_id==ADMIN_ID:
-            stats["admin"]["win"]+=1
-    else:
-        stats["users"][uid]["loss"]+=1
-        if chat_id==ADMIN_ID:
-            stats["admin"]["loss"]+=1
+    stats["users"][uid]["win" if result=="WIN" else "loss"]+=1
+
+    if chat_id==ADMIN_ID:
+        stats["admin"]["win" if result=="WIN" else "loss"]+=1
 
     save_stats(stats)
 
-    # USER RESULT ONLY
     bot.send_message(chat_id,f"""
 📊 SIGNAL RESULT
 
@@ -159,20 +147,17 @@ def messages(msg):
     uid=str(msg.chat.id)
     text=msg.text if msg.content_type=="text" else ""
 
-    # BACK
     if text=="⬅ Back":
         main_menu(msg.chat.id)
         return
 
-# ================= SKIP SIGNAL =================
-
+# SKIP
     if text=="⏭ Skip Signal":
         skip_tracker[msg.chat.id]=True
         bot.send_message(msg.chat.id,"Signal skipped ✅")
         return
 
-# ================= PAYMENT =================
-
+# PAYMENT
     if text=="💳 Payment":
 
         kb=ReplyKeyboardMarkup(resize_keyboard=True)
@@ -195,51 +180,36 @@ def messages(msg):
         back_menu(msg.chat.id,"Send payment screenshot.")
         return
 
-# ================= SIGNAL =================
-
+# SIGNAL
     if text=="📊 Get Signal":
 
-        if uid not in users:
-            users[uid]={"approved":False}
-
-        if not users[uid]["approved"]:
+        if not users.get(uid,{}).get("approved"):
             bot.send_message(msg.chat.id,"🔒 Access Locked")
             return
 
         kb=ReplyKeyboardMarkup(resize_keyboard=True)
-
         for p in PAIRS:
             kb.add(p)
-
         kb.add("⬅ Back")
 
         bot.send_message(msg.chat.id,"Select Pair",reply_markup=kb)
         return
 
-# ================= PAIR =================
-
+# PAIR
     if text in PAIRS:
-
         user_pair[msg.chat.id]=text
 
         kb=ReplyKeyboardMarkup(resize_keyboard=True)
         kb.add("M1","M5","M15")
         kb.add("⬅ Back")
 
-        bot.send_message(msg.chat.id,
-            f"Pair Selected: {text}\nSelect Timeframe",
-            reply_markup=kb)
+        bot.send_message(msg.chat.id,f"Pair Selected: {text}",reply_markup=kb)
         return
 
-# ================= TIMEFRAME =================
-
+# TIMEFRAME
     if text in ["M1","M5","M15"]:
 
         pair=user_pair.get(msg.chat.id)
-
-        if not pair:
-            bot.send_message(msg.chat.id,"Select pair first")
-            return
 
         result=generate_signal(pair,text)
 
@@ -251,27 +221,11 @@ def messages(msg):
         kb.add("⏭ Skip Signal")
         kb.add("⬅ Back")
 
-        message=f"""
-📊 AI SIGNAL
-
-Pair: {result['pair']}
-Signal: {result['signal']}
-Timeframe: {result['timeframe']}
-Entry Time: {result['entry_time']}
-Accuracy: {result['accuracy']}
-"""
-
-        bot.send_message(msg.chat.id,message,reply_markup=kb)
+        bot.send_message(msg.chat.id,result["signal"],reply_markup=kb)
 
         Thread(
             target=auto_tracker,
-            args=(
-                msg.chat.id,
-                result['pair'],
-                result['signal'],
-                result['timeframe'],
-                result['entry_time']
-            )
+            args=(msg.chat.id,result['pair'],result['signal'],result['timeframe'],result['entry_time'])
         ).start()
 
         return
@@ -290,31 +244,25 @@ Accuracy: {result['accuracy']}
         bot.send_message(msg.chat.id,"ADMIN PANEL",reply_markup=kb)
         return
 
-# ================= BOT STATISTICS =================
-
+# STATS
     if text=="📊 BOT STATISTICS" and msg.chat.id==ADMIN_ID:
 
         total_win=sum(u["win"] for u in stats["users"].values())
         total_loss=sum(u["loss"] for u in stats["users"].values())
 
-        admin_win=stats["admin"]["win"]
-        admin_loss=stats["admin"]["loss"]
-
         bot.send_message(msg.chat.id,f"""
 📊 GLOBAL BOT STATS
 
-USERS TOTAL
 WIN: {total_win}
 LOSS: {total_loss}
 
-👑 ADMIN STATS
-WIN: {admin_win}
-LOSS: {admin_loss}
+👑 ADMIN
+WIN: {stats['admin']['win']}
+LOSS: {stats['admin']['loss']}
 """)
         return
 
-# ================= BROADCAST =================
-
+# BROADCAST
     if text=="📩 Broadcast" and msg.chat.id==ADMIN_ID:
         waiting_broadcast[msg.chat.id]=True
         back_menu(msg.chat.id,"Send broadcast message")
@@ -322,27 +270,17 @@ LOSS: {admin_loss}
 
     if msg.chat.id in waiting_broadcast:
 
-        sent=0
-
         for user in users:
             try:
-                bot.copy_message(
-                    chat_id=user,
-                    from_chat_id=msg.chat.id,
-                    message_id=msg.message_id
-                )
-                sent+=1
+                bot.copy_message(user,msg.chat.id,msg.message_id)
             except:
                 pass
-
-        bot.send_message(msg.chat.id,f"Broadcast sent to {sent} users")
 
         waiting_broadcast.pop(msg.chat.id)
         main_menu(msg.chat.id)
         return
 
-# ================= PENDING USERS =================
-
+# PENDING USERS
     if text=="👥 Pending Users" and msg.chat.id==ADMIN_ID:
 
         pending=[u for u,d in users.items() if not d["approved"]]
@@ -362,95 +300,49 @@ LOSS: {admin_loss}
         bot.send_message(msg.chat.id,"Pending Users",reply_markup=kb)
         return
 
-# ================= APPROVE =================
-
+# APPROVE
     if text.startswith("✅ Approve") and msg.chat.id==ADMIN_ID:
 
         user=text.split(" ")[2]
-
         users[user]["approved"]=True
         save_users(users)
 
         bot.send_message(user,"✅ Payment Approved")
-        bot.send_message(msg.chat.id,f"Approved {user}")
         return
 
-# ================= REJECT =================
-
+# REJECT
     if text.startswith("❌ Reject") and msg.chat.id==ADMIN_ID:
 
         user=text.split(" ")[2]
-
         bot.send_message(user,"❌ Payment Rejected")
-        bot.send_message(msg.chat.id,f"Rejected {user}")
         return
 
-# ================= PAYMENT PROOF =================
-
+# PAYMENT PROOF
     if uid in waiting_payment:
 
-        bot.forward_message(
-            ADMIN_ID,
-            msg.chat.id,
-            msg.message_id
-        )
-
-        bot.send_message(msg.chat.id,"Proof sent to admin")
-
+        bot.forward_message(ADMIN_ID,msg.chat.id,msg.message_id)
         waiting_payment.pop(uid)
         return
 
-# ================= ALL USERS =================
-
+# ALL USERS
     if text=="👤 All Users" and msg.chat.id==ADMIN_ID:
 
-        vip=[]
-        nonvip=[]
+        vip=[u for u,d in users.items() if d.get("approved")]
+        nonvip=[u for u,d in users.items() if not d.get("approved")]
 
-        for uid,data in users.items():
-            if data.get("approved"):
-                vip.append(uid)
-            else:
-                nonvip.append(uid)
+        bot.send_message(msg.chat.id,f"""
+👥 USERS
 
-        message=f"""
-👥 USERS LIST
-
-✅ VIP USERS: {len(vip)}
-❌ NON VIP USERS: {len(nonvip)}
-
------- VIP ------
-{" ".join(vip) if vip else "None"}
-
------- NON VIP ------
-{" ".join(nonvip) if nonvip else "None"}
-"""
-
-        bot.send_message(msg.chat.id,message)
+VIP: {len(vip)}
+NON VIP: {len(nonvip)}
+""")
         return
 
-# ====================================================
-# 🔥 AUTO SESSION SIGNAL SYSTEM (ADDED ONLY)
-# ====================================================
-
-from datetime import timedelta
-import threading
-
-TZ=ZoneInfo("Africa/Kigali")
-
-SESSIONS=[
-    {"hour":9,"minute":30},
-    {"hour":10,"minute":0},
-    {"hour":15,"minute":0}
-]
-
-SIGNALS_PER_SESSION=5
-SIGNAL_INTERVAL=600   # 10 minutes
+# ================= REAL SESSION SYSTEM =================
 
 def broadcast_all(message):
 
     for uid,data in users.items():
-
         if data.get("approved"):
             try:
                 bot.send_message(int(uid),message)
@@ -458,200 +350,38 @@ def broadcast_all(message):
                 pass
 
 
-def auto_signal():
+def session_manager():
 
-    pair=PAIRS[0]   # bot ihitamo pair ya mbere
-    timeframe="M1"
-
-    result=generate_signal(pair,timeframe)
-
-    if result.get("status")!="success":
-        return
-
-    msg=f"""
-🤖 AUTO SESSION SIGNAL
-
-Pair: {result['pair']}
-Signal: {result['signal']}
-Timeframe: {result['timeframe']}
-Entry Time: {result['entry_time']}
-Accuracy: {result['accuracy']}
-
-🧠 Market Analysis:
-AI detected momentum + trend confirmation.
-"""
-
-    broadcast_all(msg)
-
-
-def run_session(session):
-
-    tz=ZoneInfo("Africa/Kigali")
-
-    session_time=datetime.now(tz).replace(
-        hour=session["hour"],
-        minute=session["minute"],
-        second=0,
-        microsecond=0
-    )
-
-    alert_time=session_time-timedelta(minutes=1)
-
-    # ===== PRE ALERT =====
-    while True:
-        now=datetime.now(tz)
-
-        if now>=alert_time and now<session_time:
-            broadcast_all(
-                f"⚡ Session igiye gutangira saa {session_time.strftime('%H:%M')}"
-            )
-            break
-
-        time.sleep(5)
-
-    broadcast_all("🚀 SESSION STARTED")
-
-    # ===== SEND 5 SIGNALS =====
-    for i in range(SIGNALS_PER_SESSION):
-
-        auto_signal()
-
-        time.sleep(SIGNAL_INTERVAL)
-
-    broadcast_all("✅ Session Finished")
-
-
-def session_watcher():
-
-    tz=ZoneInfo("Africa/Kigali")
+    SESSIONS=["09:30","10:00","15:00"]
 
     triggered=set()
 
     while True:
 
-        now=datetime.now(tz)
+        now=datetime.now(TZ)
+        current=now.strftime("%H:%M")
 
-        for s in SESSIONS:
+        for session in SESSIONS:
 
-            key=f"{now.date()}_{s['hour']}_{s['minute']}"
+            if current==session and session not in triggered:
 
-            session_time=now.replace(
-                hour=s["hour"],
-                minute=s["minute"],
-                second=0,
-                microsecond=0
-            )
+                triggered.add(session)
 
-            if now>=session_time and key not in triggered:
+                broadcast_all(f"🚀 SESSION STARTED {session}")
 
-                triggered.add(key)
+                for _ in range(5):
 
-                threading.Thread(
-                    target=run_session,
-                    args=(s,),
-                    daemon=True
-                ).start()
+                    signal=find_best_pair("M1")
+
+                    if signal:
+                        broadcast_all(signal["signal"])
+
+                    time.sleep(600)
 
         time.sleep(20)
 
-
-# ===== CONTINUOUS SIGNALS OUTSIDE SESSION =====
-
-def continuous_signals():
-
-    while True:
-
-        auto_signal()
-
-        time.sleep(1800)   # every 30 minutes
-
-
-def session_manager():
-
-    SESSION_TIMES=["10:15"]   # shyiramo igihe ushaka
-
-    sent_sessions=set()
-    prepare_sent=set()
-
-    while True:
-
-        now=datetime.utcnow()+timedelta(hours=2)
-        current_time=now.strftime("%H:%M")
-
-        for session in SESSION_TIMES:
-
-            # ===== PREPARE TIME =====
-            session_dt=datetime.strptime(session,"%H:%M")
-            prepare_time=(session_dt-timedelta(minutes=1)).strftime("%H:%M")
-
-            # ===== SESSION ALERT =====
-            if current_time==prepare_time and session not in prepare_sent:
-
-                bot.send_message(
-                    ADMIN_ID,
-                    f"⏰ SESSION ALERT\nSession igiye gutangira saa {session}"
-                )
-
-                prepare_sent.add(session)
-
-            # ===== SESSION START =====
-            sh, sm = map(int, session.split(":"))
-
-            if (
-                now.hour==sh and
-                now.minute==sm and
-                session not in sent_sessions
-            ):
-
-                pair=random.choice(PAIRS)
-
-                bot.send_message(
-                    ADMIN_ID,
-                    f"""
-🚀 SESSION STARTED
-
-📊 Pair: {pair}
-🧠 Real Market Analysis iri gukorwa...
-"""
-                )
-
-                time.sleep(180)
-
-                signal=generate_signal(pair,"M1")
-
-                if signal["status"]=="success":
-                    bot.send_message(ADMIN_ID,signal["signal"])
-
-                sent_sessions.add(session)
-
-        # reset buri munsi
-        if current_time=="00:01":
-            sent_sessions.clear()
-            prepare_sent.clear()
-
-        time.sleep(1)
-        
-# ===== START AUTO SYSTEM =====
-
-threading.Thread(
-    target=session_watcher,
-    daemon=True
-).start()
-
-threading.Thread(
-    target=continuous_signals,
-    daemon=True
-).start()
-
-threading.Thread(
-    target=session_manager,
-    daemon=True
-).start()
+threading.Thread(target=session_manager,daemon=True).start()
 
 # ================= START BOT =================
 
-bot.infinity_polling(
-    timeout=60,
-    long_polling_timeout=60,
-    skip_pending=True
-)
+bot.infinity_polling(skip_pending=True)
