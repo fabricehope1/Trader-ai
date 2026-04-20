@@ -7,7 +7,7 @@ from pro_engine import generate_signal, PAIRS, get_prices
 
 TZ = ZoneInfo("Africa/Kigali")
 
-SESSION_TIMES = ["17:05", "19:00", "21:00"]
+SESSION_TIMES = ["17:47", "19:00", "21:00"]
 
 SIGNALS_PER_SESSION = 5
 SIGNAL_INTERVAL = 10   # minutes hagati ya signals
