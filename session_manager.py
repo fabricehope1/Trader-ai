@@ -104,7 +104,7 @@ Close: {close}
 # ================= SESSION MANAGER =================
 def run_session(bot, users):
 
-    SESSION_TIMES = ["15:55", "18:00", "21:00"]
+    SESSION_TIMES = ["16:35", "18:00", "21:00"]
 
     done_today = set()
 
