@@ -4,6 +4,7 @@ import os
 import time
 import threading
 from threading import Thread
+from session_manager import session_manager
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from telebot.types import ReplyKeyboardMarkup
@@ -348,6 +349,14 @@ def broadcast_all(message):
                 bot.send_message(int(uid),message)
             except:
                 pass
+
+import threading
+
+threading.Thread(
+    target=session_manager,
+    args=(bot, ADMIN_ID),
+    daemon=True
+).start()
 
 # ================= START BOT =================
 
