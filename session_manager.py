@@ -42,7 +42,7 @@ def find_best_pair():
 def session_manager(bot, ADMIN_ID):
 
     # igihe session itangira
-    SESSION_TIME = "14:35"
+    SESSION_TIME = "15:00"
 
     ready_sent = False
     started = False
