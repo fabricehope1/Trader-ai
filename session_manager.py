@@ -1,5 +1,4 @@
 import time
-import random
 import threading
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -11,7 +10,7 @@ from pro_engine import generate_signal, PAIRS, get_prices
 TZ = ZoneInfo("Africa/Kigali")
 
 SIGNALS_PER_SESSION = 5
-SIGNAL_INTERVAL = 600   # 10 minutes
+SIGNAL_INTERVAL = 600
 
 SESSION_TIMES = ["15:33", "18:00", "21:00"]
 
@@ -23,14 +22,48 @@ def send_all(bot, users, message):
         if data.get("approved"):
             try:
                 bot.send_message(int(uid), message)
-            except Exception:
+            except:
                 pass
 
 
-# ================= SIGNAL CYCLE =================
+# ================= SMART PAIR SELECTOR =================
+def find_best_pair():
+
+    best_pair = None
+    best_confidence = 0
+    best_signal = None
+
+    for pair in PAIRS:
+
+        signal = generate_signal(pair, "M1")
+
+        if signal.get("status") != "success":
+            continue
+
+        confidence = signal.get("confidence", 0)
+
+        if confidence > best_confidence:
+            best_confidence = confidence
+            best_pair = pair
+            best_signal = signal
+
+    return best_pair, best_signal
+
+
+# ================= SIGNAL SESSION =================
 def run_signal_cycle(bot, users):
 
-    pair = random.choice(PAIRS)
+    send_all(
+        bot,
+        users,
+        "🧠 Scanning Market...\nFinding Best Pair..."
+    )
+
+    pair, first_signal = find_best_pair()
+
+    if not pair:
+        send_all(bot, users, "❌ No strong market opportunity found.")
+        return
 
     send_all(
         bot,
@@ -38,15 +71,14 @@ def run_signal_cycle(bot, users):
         f"""
 🚀 SESSION STARTED
 
-📊 Pair Selected: {pair}
-🧠 Real Market Analysis running...
+🔥 Best Pair Selected: {pair}
+🎯 High Probability Trade
 """
     )
 
-    # analysis time
-    time.sleep(180)
+    time.sleep(120)
 
-    for _ in range(SIGNALS_PER_SESSION):
+    for i in range(SIGNALS_PER_SESSION):
 
         signal = generate_signal(pair, "M1")
 
@@ -61,7 +93,6 @@ def run_signal_cycle(bot, users):
 
         entry = prices[-1]
 
-        # expiry
         time.sleep(60)
 
         prices2 = get_prices(pair, "M1")
@@ -83,6 +114,7 @@ def run_signal_cycle(bot, users):
             f"""
 📊 RESULT
 
+Pair: {pair}
 Entry: {entry}
 Close: {close}
 
@@ -116,23 +148,17 @@ def session_manager(bot, users):
 
             ready_time = session_time - timedelta(minutes=1)
 
-            # ===== READY ALERT =====
-            if (
-                now >= ready_time
-                and session not in ready_alert
-            ):
+            # READY ALERT
+            if now >= ready_time and session not in ready_alert:
                 send_all(
                     bot,
                     users,
-                    "⏰ SESSION STARTING SOON\nBe Ready Traders..."
+                    "⏰ SESSION STARTING SOON\nPrepare Traders..."
                 )
                 ready_alert.add(session)
 
-            # ===== START SESSION =====
-            if (
-                now >= session_time
-                and session not in done_today
-            ):
+            # START SESSION
+            if now >= session_time and session not in done_today:
 
                 threading.Thread(
                     target=run_signal_cycle,
@@ -142,7 +168,7 @@ def session_manager(bot, users):
 
                 done_today.add(session)
 
-        # reset everyday
+        # DAILY RESET
         if now.strftime("%H:%M") == "00:01":
             done_today.clear()
             ready_alert.clear()
