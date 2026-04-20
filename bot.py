@@ -429,14 +429,6 @@ LOSS: {admin_loss}
         bot.send_message(msg.chat.id,message)
         return
 
-# ================= START BOT =================
-
-bot.infinity_polling(
-    timeout=60,
-    long_polling_timeout=60,
-    skip_pending=True
-)
-
 # ====================================================
 # 🔥 AUTO SESSION SIGNAL SYSTEM (ADDED ONLY)
 # ====================================================
@@ -578,3 +570,11 @@ def continuous_signals():
 
 threading.Thread(target=session_watcher,daemon=True).start()
 threading.Thread(target=continuous_signals,daemon=True).start()
+
+# ================= START BOT =================
+
+bot.infinity_polling(
+    timeout=60,
+    long_polling_timeout=60,
+    skip_pending=True
+)
