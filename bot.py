@@ -568,8 +568,15 @@ def continuous_signals():
 
 # ===== START AUTO SYSTEM =====
 
-threading.Thread(target=session_watcher,daemon=True).start()
-threading.Thread(target=continuous_signals,daemon=True).start()
+threading.Thread(
+    target=session_watcher,
+    daemon=True
+).start()
+
+threading.Thread(
+    target=continuous_signals,
+    daemon=True
+).start()
 
 # ================= START BOT =================
 
