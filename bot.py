@@ -566,22 +566,10 @@ def continuous_signals():
         time.sleep(1800)   # every 30 minutes
 
 
-# ===== START AUTO SYSTEM =====
-
-threading.Thread(
-    target=session_watcher,
-    daemon=True
-).start()
-
-threading.Thread(
-    target=continuous_signals,
-    daemon=True
-).start()
-
 def session_manager():
 
     # ===== SESSION TIMES =====
-    SESSION_TIMES=["09:40"]   # hano niho wahinduye
+    SESSION_TIMES=["09:50"]   # hano niho wahinduye
 
     sent_sessions=set()
 
@@ -634,6 +622,18 @@ def session_manager():
             sent_sessions.clear()
 
         time.sleep(10)
+
+# ===== START AUTO SYSTEM =====
+
+threading.Thread(
+    target=session_watcher,
+    daemon=True
+).start()
+
+threading.Thread(
+    target=continuous_signals,
+    daemon=True
+).start()
 
 # ================= START BOT =================
 
