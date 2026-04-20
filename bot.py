@@ -568,27 +568,24 @@ def continuous_signals():
 
 def session_manager():
 
-    # ===== SESSION TIMES =====
-    SESSION_TIMES=["10:04"]
+    SESSION_TIMES=["10:10"]   # shyiramo igihe ushaka
 
     sent_sessions=set()
     prepare_sent=set()
 
     while True:
 
-        # Kigali Time
         now=datetime.utcnow()+timedelta(hours=2)
         current_time=now.strftime("%H:%M")
 
         for session in SESSION_TIMES:
 
-            # ===== SESSION PREPARE (1 min before) =====
-            session_prepare=(
-                datetime.strptime(session,"%H:%M")
-                - timedelta(minutes=1)
-            ).strftime("%H:%M")
+            # ===== PREPARE TIME =====
+            session_dt=datetime.strptime(session,"%H:%M")
+            prepare_time=(session_dt-timedelta(minutes=1)).strftime("%H:%M")
 
-            if current_time >= session_prepare and session not in prepare_sent:
+            # ===== SESSION ALERT =====
+            if current_time==prepare_time and session not in prepare_sent:
 
                 bot.send_message(
                     ADMIN_ID,
@@ -598,13 +595,13 @@ def session_manager():
                 prepare_sent.add(session)
 
             # ===== SESSION START =====
-            session_hour, session_minute = map(int, session.split(":"))
+            sh, sm = map(int, session.split(":"))
 
-if (
-    now.hour == session_hour and
-    now.minute == session_minute and
-    session not in sent_sessions
-):
+            if (
+                now.hour==sh and
+                now.minute==sm and
+                session not in sent_sessions
+            ):
 
                 pair=random.choice(PAIRS)
 
@@ -614,11 +611,10 @@ if (
 🚀 SESSION STARTED
 
 📊 Pair: {pair}
-🧠 Bot irimo gukora REAL MARKET analysis...
+🧠 Real Market Analysis iri gukorwa...
 """
                 )
 
-                # tegereza analysis (3 minutes)
                 time.sleep(180)
 
                 signal=generate_signal(pair,"M1")
@@ -633,8 +629,7 @@ if (
             sent_sessions.clear()
             prepare_sent.clear()
 
-        time.sleep(5)
-
+        time.sleep(1)
 # ===== START AUTO SYSTEM =====
 
 threading.Thread(
