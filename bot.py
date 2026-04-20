@@ -630,6 +630,7 @@ def session_manager():
             prepare_sent.clear()
 
         time.sleep(1)
+        
 # ===== START AUTO SYSTEM =====
 
 threading.Thread(
