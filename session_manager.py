@@ -1,8 +1,8 @@
 import time
-import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+# ENGINE YAWE
 from pro_engine import generate_signal, PAIRS, get_prices
 
 TZ = ZoneInfo("Africa/Kigali")
@@ -10,10 +10,12 @@ TZ = ZoneInfo("Africa/Kigali")
 SIGNALS_PER_SESSION = 5
 
 
-# ================= SEND =================
-def send_all(bot, users, message):
+# ================= SEND MESSAGE =================
+def send_all(bot, message):
 
-    for uid,data in users.items():
+    from bot import users
+
+    for uid, data in users.items():
         if data.get("approved"):
             try:
                 bot.send_message(int(uid), message)
@@ -21,146 +23,135 @@ def send_all(bot, users, message):
                 pass
 
 
-# ================= AI MARKET SCANNER =================
-def ai_find_trade():
+# ================= RESULT CHECK =================
+def check_result(pair, entry_price):
 
-    best_pair=None
-    best_signal=None
-    best_score=0
+    prices = get_prices(pair, "M1")
 
-    for pair in PAIRS:
+    if not prices:
+        return "UNKNOWN"
 
-        signal=generate_signal(pair,"M1")
+    close_price = prices[-1]
 
-        if signal.get("status")!="success":
-            continue
-
-        confidence=signal.get("confidence",0)
-
-        # PRO FILTERS
-        if confidence < 70:
-            continue
-
-        prices=get_prices(pair,"M1")
-        if not prices:
-            continue
-
-        volatility=max(prices[-5:])-min(prices[-5:])
-
-        score=confidence+(volatility*10000)
-
-        if score>best_score:
-            best_score=score
-            best_pair=pair
-            best_signal=signal
-
-    return best_pair,best_signal
+    if close_price > entry_price:
+        return "WIN ✅", close_price
+    else:
+        return "LOSS ❌", close_price
 
 
-# ================= PRO SESSION =================
-def run_session(bot,users):
+# ================= ONE SIGNAL =================
+def run_single_signal(bot, number, used_pairs):
 
-    send_all(bot,users,"🚀 PRO AI SESSION STARTED")
+    send_all(
+        bot,
+        f"🧠 Analysis #{number}\nAI scanning ALL pairs..."
+    )
 
-    signals_sent=0
+    signal = None
 
-    while signals_sent < SIGNALS_PER_SESSION:
+    # AI ikomeza gushaka setup nziza
+    while signal is None:
 
-        send_all(bot,users,
-        f"🧠 Analysis #{signals_sent+1}\nAI scanning market...")
+        for pair in PAIRS:
 
-        pair,signal=ai_find_trade()
+            if pair in used_pairs:
+                continue
 
-        # if market bad → wait and retry
-        if not pair:
-            send_all(bot,users,"⚠️ Market weak... waiting better setup")
-            time.sleep(60)
-            continue
+            result = generate_signal(pair, "M1")
 
-        direction="CALL 📈" if "CALL" in signal["signal"] else "PUT 📉"
+            if result["status"] == "success":
 
-        send_all(bot,users,
+                signal = result
+                used_pairs.append(pair)
+                break
+
+        if signal is None:
+            send_all(bot, "⚠️ Market weak... waiting better setup")
+            time.sleep(15)
+
+    # ================= SIGNAL =================
+    send_all(bot, signal["signal"])
+
+    pair = signal["pair"]
+
+    prices = get_prices(pair, "M1")
+    entry_price = prices[-1]
+
+    # wait entry candle
+    time.sleep(60)
+
+    result, close_price = check_result(pair, entry_price)
+
+    send_all(
+        bot,
 f"""
-🔥 PRO SIGNAL #{signals_sent+1}
+📊 RESULT
 
 Pair: {pair}
-Direction: {direction}
-Confidence: {signal.get("confidence","--")}%
 
-⏳ Prepare...
-Entry Next Minute
+Entry: {entry_price}
+Close: {close_price}
+
+Result: {result}
 """
-)
+    )
 
-        # ENTRY WAIT
-        time.sleep(60)
 
-        send_all(bot,users,f"🚨 ENTER NOW\n{pair}\n{direction}")
+# ================= SESSION ENGINE =================
+def run_signal_cycle(bot):
 
-        prices=get_prices(pair,"M1")
-        if not prices:
-            continue
+    used_pairs = []
 
-        entry=prices[-1]
+    send_all(bot, "🚀 AI SESSION STARTED")
 
-        # RESULT WAIT
-        time.sleep(60)
+    for i in range(1, SIGNALS_PER_SESSION + 1):
 
-        prices2=get_prices(pair,"M1")
-        if not prices2:
-            continue
+        run_single_signal(bot, i, used_pairs)
 
-        close=prices2[-1]
-
-        if "CALL" in direction:
-            result="WIN ✅" if close>entry else "LOSS ❌"
-        else:
-            result="WIN ✅" if close<entry else "LOSS ❌"
-
-        send_all(bot,users,
-f"""
-📊 RESULT #{signals_sent+1}
-
-Pair: {pair}
-Entry: {entry}
-Close: {close}
-
-RESULT: {result}
-"""
-)
-
-        signals_sent+=1
-
-        # AI cooldown (avoid overtrading)
-        time.sleep(60)
-
-    send_all(bot,users,"✅ PRO SESSION FINISHED")
+        if i < SIGNALS_PER_SESSION:
+            time.sleep(60)  # next analysis after result
 
 
 # ================= SESSION MANAGER =================
-def session_manager(bot,users):
+def session_manager(bot):
 
-    SESSION_TIMES=["18:32","19:00","21:00"]
+    SESSION_TIMES = ["18:57", "20:00", "21:00"]
 
-    started_today=set()
+    done = set()
 
     while True:
 
-        now=datetime.now(TZ).strftime("%H:%M")
+        now = datetime.now(TZ)
+        current = now.strftime("%H:%M")
 
         for session in SESSION_TIMES:
 
-            if now==session and session not in started_today:
+            session_time = datetime.strptime(session, "%H:%M").replace(
+                year=now.year,
+                month=now.month,
+                day=now.day,
+                tzinfo=TZ
+            )
 
-                threading.Thread(
-                    target=run_session,
-                    args=(bot,users),
-                    daemon=True
-                ).start()
+            warning_time = (session_time - timedelta(minutes=5)).strftime("%H:%M")
 
-                started_today.add(session)
+            # ⚠️ WARNING
+            if current == warning_time and session not in done:
+                send_all(bot,
+"""
+⚠️ SESSION STARTING IN 5 MINUTES
+Prepare your account...
+""")
 
-        if now=="00:01":
-            started_today.clear()
+            # 🚀 START SESSION
+            if current == session and session not in done:
 
-        time.sleep(20)
+                run_signal_cycle(bot)
+
+                done.add(session)
+
+        # reset daily
+        if current == "00:01":
+            done.clear()
+
+        time.sleep(10)
