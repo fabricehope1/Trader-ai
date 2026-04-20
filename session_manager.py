@@ -5,11 +5,11 @@ from zoneinfo import ZoneInfo
 
 from pro_engine import generate_signal, PAIRS, get_prices
 
-# ================= SETTINGS =================
-
 TZ = ZoneInfo("Africa/Kigali")
 
-SESSION_TIMES = ["16:10", "18:00", "21:00"]
+# ===== SETTINGS =====
+SIGNALS_PER_SESSION = 5
+SIGNAL_INTERVAL = 180   # 3 min hagati ya signals
 
 
 # ================= BROADCAST =================
@@ -23,128 +23,109 @@ def send_all(bot, users, message):
                 pass
 
 
-# ================= SMART PAIR FINDER =================
-def find_best_pair():
+# ================= ONE SESSION =================
+def run_signal_cycle(bot, users):
 
-    best_pair = None
-    best_conf = -1
+    pair = PAIRS[0]   # ntabwo ari random
 
-    for pair in PAIRS:
+    # READY
+    send_all(bot, users,
+f"""
+⏰ SESSION READY
+
+Prepare Traders...
+"""
+    )
+
+    time.sleep(60)
+
+    # PAIR SELECTED
+    send_all(bot, users,
+f"""
+🚀 SESSION STARTED
+
+📊 Pair: {pair}
+🧠 AI Market Analysis Running...
+"""
+    )
+
+    time.sleep(180)
+
+    # ===== SIGNAL LOOP =====
+    for i in range(SIGNALS_PER_SESSION):
 
         signal = generate_signal(pair, "M1")
 
         if signal.get("status") != "success":
             continue
 
-        conf = signal.get("confidence", 50)
+        signal_text = signal["signal"]
 
-        if conf > best_conf:
-            best_conf = conf
-            best_pair = pair
+        # SEND SIGNAL
+        send_all(bot, users, signal_text)
 
-    # fallback → ntizongera kuvuga no opportunity
-    if not best_pair:
-        best_pair = PAIRS[0]
+        prices = get_prices(pair, "M1")
+        if not prices:
+            continue
 
-    return best_pair
+        entry = prices[-1]
 
+        # ENTRY TIME (1 minute)
+        time.sleep(60)
 
-# ================= SESSION FLOW =================
-def run_session(bot, users, session_time):
+        prices2 = get_prices(pair, "M1")
+        if not prices2:
+            continue
 
-    # READY (1 minute before)
-    send_all(bot, users,
-    "⏰ SESSION READY\nPrepare Traders...")
+        close = prices2[-1]
 
-    time.sleep(60)
+        # RESULT CHECK
+        if "CALL" in signal_text:
+            result = "WIN ✅" if close > entry else "LOSS ❌"
+        else:
+            result = "WIN ✅" if close < entry else "LOSS ❌"
 
-    # PAIR SELECTED
-    pair = find_best_pair()
-
-    send_all(bot, users,
-f"""
-📊 Pair Selected: {pair}
-🧠 Market Analysis Running...
-""")
-
-    # wait until signal time (3 min)
-    time.sleep(180)
-
-    # SIGNAL
-    signal = generate_signal(pair, "M1")
-
-    if signal.get("status") != "success":
-        return
-
-    send_all(bot, users, signal["signal"])
-
-    prices = get_prices(pair, "M1")
-    if not prices:
-        return
-
-    entry = prices[-1]
-
-    # expiry 1 minute
-    time.sleep(60)
-
-    prices2 = get_prices(pair, "M1")
-    if not prices2:
-        return
-
-    close = prices2[-1]
-
-    if "CALL" in signal["signal"]:
-        result = "WIN ✅" if close > entry else "LOSS ❌"
-    else:
-        result = "WIN ✅" if close < entry else "LOSS ❌"
-
-    send_all(bot, users,
+        send_all(bot, users,
 f"""
 📊 RESULT
 
-Pair: {pair}
 Entry: {entry}
 Close: {close}
 
-RESULT: {result}
-""")
+🏁 RESULT: {result}
+"""
+        )
+
+        # WAIT NEXT SIGNAL
+        if i < SIGNALS_PER_SESSION - 1:
+            time.sleep(SIGNAL_INTERVAL)
 
 
 # ================= SESSION MANAGER =================
-def session_manager(bot, users):
+def run_session(bot, users):
 
-    started_today = set()
+    SESSION_TIMES = ["15:55", "18:00", "21:00"]
+
+    done_today = set()
 
     while True:
 
-        now = datetime.now(TZ)
+        now = datetime.now(TZ).strftime("%H:%M")
 
         for session in SESSION_TIMES:
 
-            session_dt = datetime.strptime(
-                session, "%H:%M"
-            ).replace(
-                year=now.year,
-                month=now.month,
-                day=now.day,
-                tzinfo=TZ
-            )
-
-            ready_dt = session_dt - timedelta(minutes=1)
-
-            # READY ALERT
-            if now >= ready_dt and session not in started_today:
+            if now == session and session not in done_today:
 
                 threading.Thread(
-                    target=run_session,
-                    args=(bot, users, session),
+                    target=run_signal_cycle,
+                    args=(bot, users),
                     daemon=True
                 ).start()
 
-                started_today.add(session)
+                done_today.add(session)
 
         # reset everyday
-        if now.strftime("%H:%M") == "00:01":
-            started_today.clear()
+        if now == "00:01":
+            done_today.clear()
 
-        time.sleep(5)
+        time.sleep(10)
