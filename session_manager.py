@@ -10,7 +10,7 @@ from pro_engine import generate_signal, PAIRS, get_prices
 
 TZ = ZoneInfo("Africa/Kigali")
 
-SESSION_TIMES = ["18:00", "21:00"]   # hindura uko ushaka
+SESSION_TIMES = ["18:20", "21:00"]   # hindura uko ushaka
 SIGNALS_PER_SESSION = 5
 
 
