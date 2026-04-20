@@ -569,7 +569,7 @@ def continuous_signals():
 def session_manager():
 
     # ===== SESSION TIMES =====
-    SESSION_TIMES=["09:55"]
+    SESSION_TIMES=["10:04"]
 
     sent_sessions=set()
     prepare_sent=set()
@@ -598,7 +598,13 @@ def session_manager():
                 prepare_sent.add(session)
 
             # ===== SESSION START =====
-            if current_time >= session and session not in sent_sessions:
+            session_hour, session_minute = map(int, session.split(":"))
+
+if (
+    now.hour == session_hour and
+    now.minute == session_minute and
+    session not in sent_sessions
+):
 
                 pair=random.choice(PAIRS)
 
