@@ -7,151 +7,133 @@ from pro_engine import generate_signal, PAIRS, get_prices
 
 TZ = ZoneInfo("Africa/Kigali")
 
-SESSION_TIMES = ["17:47", "19:00", "21:00"]
-
+SESSION_TIMES = ["18:00","21:00"]
 SIGNALS_PER_SESSION = 5
-SIGNAL_INTERVAL = 10   # minutes hagati ya signals
+SIGNAL_INTERVAL = 10
 
 
-# ================= SEND ALL =================
+# ================= SEND =================
 def send_all(bot, users, message):
-
-    for uid, data in users.items():
+    for uid,data in users.items():
         if data.get("approved"):
             try:
-                bot.send_message(int(uid), message)
+                bot.send_message(int(uid),message)
             except:
                 pass
 
 
-# ================= FIND BEST PAIR =================
+# ================= SAFE PAIR FINDER =================
 def find_best_pair():
 
-    best_pair = None
-    best_signal = None
-    best_conf = -1
+    start=time.time()
 
-    for pair in PAIRS:
+    while time.time()-start < 10:
 
-        signal = generate_signal(pair, "M1")
+        for pair in PAIRS:
 
-        if signal.get("status") != "success":
-            continue
+            signal=generate_signal(pair,"M1")
 
-        conf = signal.get("confidence", 50)
+            if signal.get("status")=="success":
+                return pair,signal
 
-        if conf > best_conf:
-            best_conf = conf
-            best_pair = pair
-            best_signal = signal
+    # fallback (ntigomba guhagarara)
+    pair=PAIRS[0]
+    signal=generate_signal(pair,"M1")
 
-    return best_pair, best_signal
+    return pair,signal
 
 
-# ================= SINGLE SIGNAL FLOW =================
-def run_signal(bot, users, number):
+# ================= SINGLE SIGNAL =================
+def run_signal(bot,users,number):
 
-    send_all(bot, users,
-f"🧠 Analysis #{number}\nScanning Market...")
+    send_all(bot,users,f"🧠 Analysis #{number}\nScanning Market...")
 
-    pair, signal = find_best_pair()
+    pair,signal=find_best_pair()
 
-    if not pair:
-        send_all(bot, users, "❌ No opportunity found.")
-        return
+    now=datetime.now(TZ)
+    entry_time=now+timedelta(minutes=1)
 
-    # prepare
-    now = datetime.now(TZ)
-    entry_time = now + timedelta(minutes=1)
-
-    send_all(bot, users,
+    send_all(bot,users,
 f"""
 📊 SIGNAL #{number}
 
 Pair: {pair}
-Confidence: {signal['confidence']}%
 
-⏳ Prepare...
+Prepare...
 Entry At: {entry_time.strftime('%H:%M')}
 """)
 
     # wait entry
-    while datetime.now(TZ) < entry_time:
+    while datetime.now(TZ)<entry_time:
         time.sleep(1)
 
-    send_all(bot, users,
-f"🔥 ENTRY NOW → {signal['signal']}")
+    send_all(bot,users,f"🔥 ENTRY → {signal['signal']}")
 
-    prices = get_prices(pair, "M1")
+    prices=get_prices(pair,"M1")
     if not prices:
         return
 
-    entry_price = prices[-1]
+    entry=prices[-1]
 
-    # expiry
-    expiry = datetime.now(TZ) + timedelta(minutes=1)
+    expiry=datetime.now(TZ)+timedelta(minutes=1)
 
-    while datetime.now(TZ) < expiry:
+    while datetime.now(TZ)<expiry:
         time.sleep(1)
 
-    prices2 = get_prices(pair, "M1")
+    prices2=get_prices(pair,"M1")
     if not prices2:
         return
 
-    close_price = prices2[-1]
+    close=prices2[-1]
 
     if "CALL" in signal["signal"]:
-        result = "WIN ✅" if close_price > entry_price else "LOSS ❌"
+        result="WIN ✅" if close>entry else "LOSS ❌"
     else:
-        result = "WIN ✅" if close_price < entry_price else "LOSS ❌"
+        result="WIN ✅" if close<entry else "LOSS ❌"
 
-    send_all(bot, users,
+    send_all(bot,users,
 f"""
 📊 RESULT #{number}
 
 Pair: {pair}
-Entry: {entry_price}
-Close: {close_price}
+Entry: {entry}
+Close: {close}
 
 RESULT: {result}
 """)
 
 
 # ================= SESSION =================
-def run_session(bot, users, session_time):
+def run_session(bot,users,session_time):
 
-    send_all(bot, users,
-"🚀 SESSION STARTED")
-
-    base_time = session_time
+    send_all(bot,users,"🚀 SESSION STARTED")
 
     for i in range(SIGNALS_PER_SESSION):
 
-        signal_time = base_time + timedelta(minutes=i * SIGNAL_INTERVAL)
+        signal_time=session_time+timedelta(minutes=i*SIGNAL_INTERVAL)
 
-        # wait signal time
-        while datetime.now(TZ) < signal_time:
+        while datetime.now(TZ)<signal_time:
             time.sleep(1)
 
-        run_signal(bot, users, i + 1)
+        run_signal(bot,users,i+1)
 
-    send_all(bot, users, "✅ SESSION FINISHED")
+    send_all(bot,users,"✅ SESSION FINISHED")
 
 
-# ================= SESSION MANAGER =================
-def session_manager(bot, users):
+# ================= MANAGER =================
+def session_manager(bot,users):
 
-    started_today = set()
-    ready_alert = set()
+    started=set()
+    ready=set()
 
     while True:
 
-        now = datetime.now(TZ)
+        now=datetime.now(TZ)
 
         for session in SESSION_TIMES:
 
-            session_time = datetime.strptime(
-                session, "%H:%M"
+            session_time=datetime.strptime(
+                session,"%H:%M"
             ).replace(
                 year=now.year,
                 month=now.month,
@@ -159,30 +141,25 @@ def session_manager(bot, users):
                 tzinfo=TZ
             )
 
-            ready_time = session_time - timedelta(minutes=1)
+            ready_time=session_time-timedelta(minutes=1)
 
-            # READY ALERT
-            if now >= ready_time and session not in ready_alert:
-
-                send_all(bot, users,
+            if now>=ready_time and session not in ready:
+                send_all(bot,users,
 "⏰ SESSION STARTING SOON\nBe Ready Traders...")
+                ready.add(session)
 
-                ready_alert.add(session)
-
-            # START SESSION
-            if now >= session_time and session not in started_today:
+            if now>=session_time and session not in started:
 
                 threading.Thread(
                     target=run_session,
-                    args=(bot, users, session_time),
+                    args=(bot,users,session_time),
                     daemon=True
                 ).start()
 
-                started_today.add(session)
+                started.add(session)
 
-        # RESET DAILY
-        if now.strftime("%H:%M") == "00:01":
-            started_today.clear()
-            ready_alert.clear()
+        if now.strftime("%H:%M")=="00:01":
+            started.clear()
+            ready.clear()
 
         time.sleep(5)
